@@ -473,6 +473,7 @@ let violationCount = 0;
 let quizStartTimeStr = '';
 let hasilCache = [];       // diisi oleh listener realtime
 let unsubscribeHasil = null;
+let isSubmittingQuiz = false;   // mencegah submit ganda
 
 // INISIALISASI DATA AWAL JIKA KOLEKSI MASIH KOSONG
 async function initDB() {
@@ -624,10 +625,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if (document.getElementById('btn-export-excel')) document.getElementById('btn-export-excel').onclick = () => exportHasilExcel();
 
   if (document.getElementById('btn-prev-soal')) document.getElementById('btn-prev-soal').onclick = () => {
-    if (currentQuestionIndex > 0) { currentQuestionIndex--; renderQuizQuestion(); }
+    if (currentQuestionIndex > 0) { currentQuestionIndex--; renderQuizQuestion(); saveProgress(); }
   };
   if (document.getElementById('btn-next-soal')) document.getElementById('btn-next-soal').onclick = () => {
-    if (currentQuestionIndex < currentQuestions.length - 1) { currentQuestionIndex++; renderQuizQuestion(); }
+    if (currentQuestionIndex < currentQuestions.length - 1) { currentQuestionIndex++; renderQuizQuestion(); saveProgress(); }
   };
   if (document.getElementById('btn-finish-quiz')) document.getElementById('btn-finish-quiz').onclick = () => {
     if (confirm("Apakah Anda yakin ingin menyelesaikan ujian?")) finishQuiz();
@@ -769,6 +770,25 @@ async function promptTokenModal(ujianId) {
 }
 
 async function startQuizWithTarget(foundUjian) {
+  currentUjian = foundUjian;
+  violationCount = 0;
+  isSubmittingQuiz = false;
+
+  // Cek apakah ada progress tersimpan (misalnya ujian sebelumnya sempat terputus)
+  showLoading(true);
+  const existing = await loadProgress(currentSiswa._id, foundUjian._id);
+  showLoading(false);
+
+  if (existing) {
+    currentQuestions = existing.questions;
+    studentAnswers = existing.answers || {};
+    currentQuestionIndex = existing.currentIndex || 0;
+    quizTimeRemaining = existing.timeRemaining;
+    quizStartTimeStr = existing.startTimeStr;
+    startQuizInterface();
+    return;
+  }
+
   showLoading(true);
   const soalList = await DB.getAll('soal');
   showLoading(false);
@@ -776,8 +796,6 @@ async function startQuizWithTarget(foundUjian) {
 
   if (filteredSoal.length === 0) return alert("Belum ada soal untuk topik ujian ini!");
 
-  currentUjian = foundUjian;
-  violationCount = 0;
   quizStartTimeStr = new Date().toLocaleTimeString('id-ID');
 
   if (foundUjian.acakSoal) {
@@ -795,12 +813,52 @@ async function startQuizWithTarget(foundUjian) {
   quizTimeRemaining = foundUjian.durasi * 60;
 
   startQuizInterface();
+  saveProgress(); // simpan progress awal
+}
+
+// ===== AUTOSAVE JAWABAN (progress tersimpan di Firestore, bukan hanya di memori browser) =====
+function progressDocId() { return `${currentSiswa._id}_${currentUjian._id}`; }
+
+async function saveProgress() {
+  if (!currentSiswa || !currentUjian) return;
+  try {
+    await firestore.collection('progress').doc(progressDocId()).set({
+      siswaId: currentSiswa._id,
+      ujianId: currentUjian._id,
+      questions: currentQuestions,
+      answers: studentAnswers,
+      currentIndex: currentQuestionIndex,
+      timeRemaining: quizTimeRemaining,
+      startTimeStr: quizStartTimeStr,
+      updatedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error("Gagal autosave progress:", err);
+  }
+}
+
+async function loadProgress(siswaId, ujianId) {
+  try {
+    const doc = await firestore.collection('progress').doc(`${siswaId}_${ujianId}`).get();
+    return doc.exists ? doc.data() : null;
+  } catch (err) {
+    console.error("Gagal memuat progress:", err);
+    return null;
+  }
+}
+
+async function clearProgress() {
+  if (!currentSiswa || !currentUjian) return;
+  try { await firestore.collection('progress').doc(progressDocId()).delete(); } catch (err) { /* abaikan */ }
 }
 
 function startQuizInterface() {
   showScreen('screen-quiz');
   document.getElementById('quiz-title-name').innerText = currentUjian.nama;
   document.getElementById('quiz-student-info').innerText = `${currentSiswa.nama} (${currentSiswa.kelas})`;
+  const finishBtn = document.getElementById('btn-finish-quiz');
+  if (finishBtn) { finishBtn.disabled = false; finishBtn.innerText = 'Selesaikan Ujian'; }
+  isSubmittingQuiz = false;
 
   renderQuizNavGrid();
   renderQuizQuestion();
@@ -818,6 +876,8 @@ function startQuizInterface() {
       clearInterval(quizTimerInterval);
       alert("Waktu pengerjaan telah habis!");
       finishQuiz();
+    } else if (quizTimeRemaining % 15 === 0) {
+      saveProgress(); // autosave berkala, tidak setiap detik supaya hemat kuota
     }
   }, 1000);
 }
@@ -833,6 +893,7 @@ function renderQuizNavGrid() {
 function jumpToQuestion(idx) {
   currentQuestionIndex = idx;
   renderQuizQuestion();
+  saveProgress();
 }
 
 function renderQuizQuestion() {
@@ -857,9 +918,15 @@ function renderQuizQuestion() {
 function selectAnswer(opIdx) {
   studentAnswers[currentQuestionIndex] = opIdx;
   renderQuizNavGrid();
+  saveProgress();
 }
 
 async function finishQuiz() {
+  if (isSubmittingQuiz) return; // cegah submit ganda
+  isSubmittingQuiz = true;
+  const finishBtn = document.getElementById('btn-finish-quiz');
+  if (finishBtn) { finishBtn.disabled = true; finishBtn.innerText = 'Menyimpan...'; }
+
   if (quizTimerInterval) clearInterval(quizTimerInterval);
 
   let correctCount = 0;
@@ -883,17 +950,26 @@ async function finishQuiz() {
   const endTimeStr = new Date().toLocaleTimeString('id-ID');
 
   showLoading(true);
-  await DB.add('hasil', {
-    ujianId: currentUjian._id,
-    nama: currentSiswa.nama,
-    kelas: currentSiswa.kelas,
-    nilai: finalScore,
-    startTime: quizStartTimeStr,
-    endTime: endTimeStr,
-    statusAkses: 'Tepat Waktu',
-    pelanggaran: violationCount,
-    review
-  });
+  try {
+    await DB.add('hasil', {
+      ujianId: currentUjian._id,
+      nama: currentSiswa.nama,
+      kelas: currentSiswa.kelas,
+      nilai: finalScore,
+      startTime: quizStartTimeStr,
+      endTime: endTimeStr,
+      statusAkses: 'Tepat Waktu',
+      pelanggaran: violationCount,
+      review
+    });
+    await clearProgress(); // ujian resmi selesai, progress sementara dihapus
+  } catch (err) {
+    console.error(err);
+    showLoading(false);
+    isSubmittingQuiz = false;
+    if (finishBtn) { finishBtn.disabled = false; finishBtn.innerText = 'Selesaikan Ujian'; }
+    return alert("Gagal menyimpan hasil ujian, cek koneksi internet dan coba lagi.");
+  }
   showLoading(false);
 
   loadSiswaDashboard();
