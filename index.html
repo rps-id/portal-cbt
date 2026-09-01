@@ -696,7 +696,7 @@ async function loadSiswaDashboard() {
 
   container.innerHTML = availableUjian.map(u => {
     const topikObj = allTopik.find(t => t._id === u.topikId);
-    const sudahSelesai = hasilList.some(h => h.ujianId === u._id && h.nama === currentSiswa.nama);
+    const hasilRecord = hasilList.find(h => h.ujianId === u._id && h.nama === currentSiswa.nama);
 
     return `
       <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
@@ -707,8 +707,8 @@ async function loadSiswaDashboard() {
           </p>
         </div>
         <div>
-          ${sudahSelesai
-            ? `<span class="status-badge success" style="padding: 6px 12px;">✅ Sudah Dikerjakan</span>`
+          ${hasilRecord
+            ? `<span class="status-badge success" style="padding: 6px 12px;">✅ ${u.tampilHasil ? 'Nilai: ' + hasilRecord.nilai : 'Sudah Dikerjakan'}</span>`
             : `<button class="btn btn-sm" onclick="promptTokenModal('${u._id}')">🚀 Kerjakan Soal</button>`
           }
         </div>
@@ -1031,7 +1031,29 @@ async function showTopikForm(editId = null) {
   };
 }
 
-async function deleteTopik(id) { if (confirm("Hapus topik ini? (Soal & ujian yang memakai topik ini tidak akan otomatis terhapus)")) { showLoading(true); await DB.remove('topik', id); showLoading(false); renderTopik(); } }
+async function deleteTopik(id) {
+  if (!confirm("Hapus topik ini? Semua soal, paket ujian, token, dan nilai siswa yang terkait topik ini akan IKUT TERHAPUS. Lanjutkan?")) return;
+  showLoading(true);
+  try {
+    const [soalList, ujianList, tokenList, hasilList] = await Promise.all([DB.getAll('soal'), DB.getAll('ujian'), DB.getAll('token'), DB.getAll('hasil')]);
+    const soalToDelete = soalList.filter(s => s.topikId === id);
+    const ujianToDelete = ujianList.filter(u => u.topikId === id);
+    const ujianIds = ujianToDelete.map(u => u._id);
+    const tokenToDelete = tokenList.filter(t => ujianIds.includes(t.ujianId));
+    const hasilToDelete = hasilList.filter(h => ujianIds.includes(h.ujianId));
+
+    for (const s of soalToDelete) await DB.remove('soal', s._id);
+    for (const t of tokenToDelete) await DB.remove('token', t._id);
+    for (const h of hasilToDelete) await DB.remove('hasil', h._id);
+    for (const u of ujianToDelete) await DB.remove('ujian', u._id);
+    await DB.remove('topik', id);
+  } catch (err) {
+    console.error(err);
+    alert("Terjadi kesalahan saat menghapus data terkait.");
+  }
+  showLoading(false);
+  renderTopik();
+}
 
 async function renderSoal() {
   const filterT = document.getElementById('filter-soal-topik').value;
@@ -1273,11 +1295,16 @@ async function renderToken() {
         <td>${uj?uj.nama:t.ujianId}</td>
         <td><small>${t.start.replace('T',' ')} s.d ${t.end.replace('T',' ')}</small></td>
         <td><span class="status-badge ${isExp?'danger':'success'}">${isExp?'Kedaluwarsa':'Aktif'}</span></td>
-        <td><button class="btn btn-sm ${t.active?'btn-danger':'btn-success'}" onclick="toggleToken('${t._id}', ${!t.active})">${t.active?'Nonaktifkan':'Aktifkan'}</button></td>
+        <td>
+          <button class="btn btn-sm ${t.active?'btn-danger':'btn-success'}" onclick="toggleToken('${t._id}', ${!t.active})">${t.active?'Nonaktifkan':'Aktifkan'}</button>
+          <button class="btn btn-sm btn-outline" onclick="deleteToken('${t._id}')">Hapus</button>
+        </td>
       </tr>
     `;
   }).join('') || '<tr><td colspan="5" style="text-align:center;">Belum ada token.</td></tr>';
 }
+
+async function deleteToken(id) { if (confirm("Hapus token ini?")) { showLoading(true); await DB.remove('token', id); showLoading(false); renderToken(); } }
 
 async function generateToken() {
   const uId = document.getElementById('token-select-ujian').value; if(!uId) return alert("Buat paket ujian terlebih dahulu!");
@@ -1316,7 +1343,10 @@ async function renderHasil() {
       <td><small>${h.endTime||'-'}</small></td>
       <td><span class="status-badge ${h.statusAkses==='Terlambat'?'warning':'success'}">${h.statusAkses||'Tepat Waktu'}</span></td>
       <td><span class="status-badge ${h.pelanggaran>0?'danger':'success'}">${h.pelanggaran||0} Kali</span></td>
-      <td><button class="btn btn-sm btn-outline" onclick="showDetailHasil('${h._id}')">Detail</button></td>
+      <td>
+        <button class="btn btn-sm btn-outline" onclick="showDetailHasil('${h._id}')">Detail</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteHasil('${h._id}')">Hapus</button>
+      </td>
     </tr>
   `).join('') || '<tr><td colspan="8" style="text-align:center;">Belum ada hasil pengerjaan.</td></tr>';
 
@@ -1339,6 +1369,14 @@ async function renderHasil() {
   container.innerHTML = '<ol style="padding-left:18px;">' + sortedWrong.slice(0, 5).map(([teks, count]) => `
     <li style="margin-bottom:4px;">${teks} — <strong style="color:var(--danger);">${count} siswa salah (${Math.round((count/list.length)*100)}%)</strong></li>
   `).join('') + '</ol>';
+}
+
+async function deleteHasil(id) {
+  if (!confirm("Hapus hasil ujian ini? Siswa yang bersangkutan akan bisa mengerjakan ujian ini lagi dengan token baru.")) return;
+  showLoading(true);
+  await DB.remove('hasil', id);
+  showLoading(false);
+  // hasilCache & tabel akan otomatis ter-update lewat listener realtime
 }
 
 function showDetailHasil(id) {
