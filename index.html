@@ -231,6 +231,7 @@
                 📤 Upload Excel <input type="file" id="file-peserta-excel" accept=".xlsx, .xls" hidden>
               </label>
               <select id="filter-peserta-kelas" style="width:auto;"><option value="">-- Semua Kelas --</option></select>
+              <input type="text" id="search-peserta" placeholder="🔍 Cari nama/username..." style="width:180px;" oninput="renderPeserta()">
             </div>
           </div>
 
@@ -250,7 +251,12 @@
 
           <div class="table-container">
             <table>
-              <thead><tr><th>Kelas</th><th>Nama Peserta</th><th>Username</th><th>Password</th><th>Aksi</th></tr></thead>
+              <thead><tr>
+                <th onclick="setPesertaSort('kelas')" style="cursor:pointer; user-select:none;">Kelas <span id="sort-icon-kelas"></span></th>
+                <th onclick="setPesertaSort('nama')" style="cursor:pointer; user-select:none;">Nama Peserta <span id="sort-icon-nama"></span></th>
+                <th onclick="setPesertaSort('user')" style="cursor:pointer; user-select:none;">Username <span id="sort-icon-user"></span></th>
+                <th>Password</th><th>Aksi</th>
+              </tr></thead>
               <tbody id="tbody-peserta"></tbody>
             </table>
           </div>
@@ -281,6 +287,7 @@
                 📤 Upload Soal <input type="file" id="file-soal-upload" accept=".xlsx, .xls" hidden>
               </label>
               <select id="filter-soal-topik" style="width:auto;"><option value="">-- Semua Topik --</option></select>
+              <input type="text" id="search-soal" placeholder="🔍 Cari teks soal..." style="width:180px;" oninput="renderSoal()">
             </div>
           </div>
 
@@ -308,9 +315,12 @@
 
         <!-- 4d. UJIAN -->
         <div id="page-ujian" class="admin-panel-page">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 15px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 15px; flex-wrap:wrap; gap:10px;">
             <h3>Paket Ujian Active</h3>
-            <button type="button" class="btn btn-sm" id="btn-add-ujian">+ Buat Paket Ujian</button>
+            <div style="display:flex; gap:8px;">
+              <button type="button" class="btn btn-sm" id="btn-add-ujian">+ Buat Paket Ujian</button>
+              <input type="text" id="search-ujian" placeholder="🔍 Cari nama ujian..." style="width:180px;" oninput="renderUjian()">
+            </div>
           </div>
           <div class="table-container">
             <table>
@@ -341,6 +351,9 @@
             <button type="button" class="btn btn-sm" id="btn-generate-token">🔑 Generate Token Acak</button>
           </div>
 
+          <div style="margin-bottom:10px;">
+            <input type="text" id="search-token" placeholder="🔍 Cari kode token / nama ujian..." style="width:260px;" oninput="renderToken()">
+          </div>
           <div class="table-container">
             <table>
               <thead><tr><th>Token</th><th>Paket Ujian</th><th>Masa Berlaku</th><th>Status</th><th>Aksi</th></tr></thead>
@@ -354,6 +367,7 @@
           <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap;">
             <select id="filter-hasil-ujian" style="width: 200px;"><option value="">-- Semua Ujian --</option></select>
             <select id="filter-hasil-kelas" style="width: 150px;"><option value="">-- Semua Kelas --</option></select>
+            <input type="text" id="search-hasil" placeholder="🔍 Cari nama siswa..." style="width:180px;" oninput="renderHasil()">
             <button type="button" class="btn btn-outline btn-sm" id="btn-export-excel">📊 Export Excel</button>
           </div>
 
@@ -899,16 +913,34 @@ async function finishQuiz() {
   }
 }
 
+let pesertaSort = { field: null, dir: 'asc' };
+function setPesertaSort(field) {
+  if (pesertaSort.field === field) pesertaSort.dir = pesertaSort.dir === 'asc' ? 'desc' : 'asc';
+  else { pesertaSort.field = field; pesertaSort.dir = 'asc'; }
+  renderPeserta();
+}
+
 async function renderPeserta() {
   const filterEl = document.getElementById('filter-peserta-kelas');
   if (!filterEl) return;
   const kelasFilter = filterEl.value;
+  const searchVal = (document.getElementById('search-peserta')?.value || '').toLowerCase().trim();
   showLoading(true);
   let list = await DB.getAll('peserta');
   showLoading(false);
   const kelasSet = [...new Set(list.map(p => p.kelas))].filter(Boolean);
   filterEl.innerHTML = '<option value="">-- Semua Kelas --</option>' + kelasSet.map(k => `<option value="${k}" ${k===kelasFilter?'selected':''}>${k}</option>`).join('');
   if (kelasFilter) list = list.filter(p => p.kelas === kelasFilter);
+  if (searchVal) list = list.filter(p => p.nama.toLowerCase().includes(searchVal) || p.user.toLowerCase().includes(searchVal));
+
+  if (pesertaSort.field) {
+    const f = pesertaSort.field, dir = pesertaSort.dir === 'asc' ? 1 : -1;
+    list.sort((a, b) => (a[f]||'').toString().toLowerCase().localeCompare((b[f]||'').toString().toLowerCase()) * dir);
+  }
+  ['kelas','nama','user'].forEach(f => {
+    const el = document.getElementById('sort-icon-'+f);
+    if (el) el.innerText = pesertaSort.field === f ? (pesertaSort.dir==='asc'?'▲':'▼') : '';
+  });
 
   const tbody = document.getElementById('tbody-peserta');
   if (!tbody) return;
@@ -1057,11 +1089,13 @@ async function deleteTopik(id) {
 
 async function renderSoal() {
   const filterT = document.getElementById('filter-soal-topik').value;
+  const searchVal = (document.getElementById('search-soal')?.value || '').toLowerCase().trim();
   showLoading(true);
   let [list, topiks] = await Promise.all([DB.getAll('soal'), DB.getAll('topik')]);
   showLoading(false);
   document.getElementById('filter-soal-topik').innerHTML = '<option value="">-- Semua Topik --</option>' + topiks.map(t => `<option value="${t._id}" ${t._id===filterT?'selected':''}>${t.nama}</option>`).join('');
   if (filterT) list = list.filter(s => s.topikId === filterT);
+  if (searchVal) list = list.filter(s => s.teks.toLowerCase().includes(searchVal));
 
   const tbody = document.getElementById('tbody-soal');
   if (!tbody) return;
@@ -1209,9 +1243,11 @@ async function renderUjian() {
   showLoading(true);
   const [list, topiks] = await Promise.all([DB.getAll('ujian'), DB.getAll('topik')]);
   showLoading(false);
+  const searchVal = (document.getElementById('search-ujian')?.value || '').toLowerCase().trim();
+  const filteredList = searchVal ? list.filter(u => u.nama.toLowerCase().includes(searchVal)) : list;
   const tbody = document.getElementById('tbody-ujian');
   if (!tbody) return;
-  tbody.innerHTML = list.map((u) => {
+  tbody.innerHTML = filteredList.map((u) => {
     const top = topiks.find(t => t._id === u.topikId);
     return `
       <tr>
@@ -1283,8 +1319,10 @@ async function renderToken() {
   if (document.getElementById('token-end')) document.getElementById('token-end').value = new Date(now.getTime()+7200000).toISOString().slice(0,16);
 
   showLoading(true);
-  const list = await DB.getAll('token');
+  let list = await DB.getAll('token');
   showLoading(false);
+  const searchVal = (document.getElementById('search-token')?.value || '').toLowerCase().trim();
+  if (searchVal) list = list.filter(t => { const uj = ujians.find(u => u._id === t.ujianId); return t.code.toLowerCase().includes(searchVal) || (uj && uj.nama.toLowerCase().includes(searchVal)); });
   const tbody = document.getElementById('tbody-token');
   if (!tbody) return;
   tbody.innerHTML = list.map((t) => {
@@ -1323,6 +1361,17 @@ function startHasilPage() {
   unsubscribeHasil = DB.listenHasil((list) => { hasilCache = list; renderHasil(); });
 }
 
+function getFilteredHasil() {
+  const filterU = document.getElementById('filter-hasil-ujian').value;
+  const filterK = document.getElementById('filter-hasil-kelas').value;
+  const searchVal = (document.getElementById('search-hasil')?.value || '').toLowerCase().trim();
+  let list = hasilCache;
+  if (filterU) list = list.filter(h => h.ujianId === filterU);
+  if (filterK) list = list.filter(h => h.kelas === filterK);
+  if (searchVal) list = list.filter(h => h.nama.toLowerCase().includes(searchVal));
+  return list;
+}
+
 async function renderHasil() {
   showLoading(true);
   const [ujians, peserta] = await Promise.all([DB.getAll('ujian'), DB.getAll('peserta')]);
@@ -1331,7 +1380,7 @@ async function renderHasil() {
   document.getElementById('filter-hasil-ujian').innerHTML = '<option value="">-- Semua Ujian --</option>' + ujians.map(u => `<option value="${u._id}" ${u._id===filterU?'selected':''}>${u.nama}</option>`).join('');
   const kelasSet = [...new Set(peserta.map(p => p.kelas))]; document.getElementById('filter-hasil-kelas').innerHTML = '<option value="">-- Semua Kelas --</option>' + kelasSet.map(k => `<option value="${k}" ${k===filterK?'selected':''}>${k}</option>`).join('');
 
-  let list = hasilCache; if (filterU) list = list.filter(h => h.ujianId === filterU); if (filterK) list = list.filter(h => h.kelas === filterK);
+  let list = getFilteredHasil();
   const tbody = document.getElementById('tbody-hasil');
   if (!tbody) return;
   tbody.innerHTML = list.map((h) => `
@@ -1397,7 +1446,8 @@ function showDetailHasil(id) {
 }
 
 function exportHasilExcel() {
-  const list = hasilCache; if (list.length === 0) return alert("Belum ada data.");
+  const list = getFilteredHasil();
+  if (list.length === 0) return alert("Tidak ada data sesuai filter yang dipilih.");
   const ws = XLSX.utils.json_to_sheet(list.map(l => ({ Nama: l.nama, Kelas: l.kelas, Nilai: l.nilai, Mulai: l.startTime, Selesai: l.endTime, Status: l.statusAkses, Pelanggaran: l.pelanggaran })));
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Hasil_Ujian"); XLSX.writeFile(wb, "Hasil_Ujian_CBT.xlsx");
 }
