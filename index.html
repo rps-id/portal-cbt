@@ -610,7 +610,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if (document.getElementById('btn-add-soal')) document.getElementById('btn-add-soal').onclick = () => showSoalForm();
   if (document.getElementById('filter-soal-topik')) document.getElementById('filter-soal-topik').onchange = () => renderSoal();
   if (document.getElementById('btn-dl-tpl-soal')) document.getElementById('btn-dl-tpl-soal').onclick = () => {
-    const ws = XLSX.utils.aoa_to_sheet([["Nama Topik (persis)", "Teks Soal", "URL Gambar", "Opsi A", "Opsi B", "Opsi C", "Opsi D", "Opsi E", "Kunci (A/B/C/D/E)"], ["Makanan Khas Daerah", "Bumbu dasar merah?", "", "Cabai", "Kunyit", "Kecap", "Gula", "", "A"]]);
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["Nama Topik (persis)", "Teks Soal", "URL Gambar Soal", "Opsi A", "Opsi B", "Opsi C", "Opsi D", "Opsi E", "Kunci (A/B/C/D/E)", "Gambar A (URL)", "Gambar B (URL)", "Gambar C (URL)", "Gambar D (URL)", "Gambar E (URL)"],
+      ["Makanan Khas Daerah", "Bumbu dasar merah?", "", "Cabai", "Kunyit", "Kecap", "Gula", "", "A", "", "", "", "", ""]
+    ]);
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Template_Soal"); XLSX.writeFile(wb, "Template_Soal.xlsx");
   };
   if (document.getElementById('file-soal-upload')) document.getElementById('file-soal-upload').onchange = (e) => handleUploadSoal(e);
@@ -803,7 +806,11 @@ async function startQuizWithTarget(foundUjian) {
   }
 
   currentQuestions = filteredSoal.map(s => {
-    let ops = s.opsi.map((txt, idx) => ({ txt, isCorrect: idx === s.kunci }));
+    let ops = s.opsi.map((o, idx) => {
+      const teks = typeof o === 'string' ? o : o.teks;
+      const img = typeof o === 'string' ? '' : (o.img || '');
+      return { txt: teks, img, isCorrect: idx === s.kunci };
+    });
     if (foundUjian.acakOpsi) ops = ops.sort(() => Math.random() - 0.5);
     return { id: s._id, teks: s.teks, imgUrl: s.imgUrl, options: ops };
   });
@@ -907,7 +914,7 @@ function renderQuizQuestion() {
   opsContainer.innerHTML = q.options.map((op, opIdx) => `
     <label class="option-item">
       <input type="radio" name="opt-ans" value="${opIdx}" ${studentAnswers[currentQuestionIndex] === opIdx ? 'checked' : ''} onchange="selectAnswer(${opIdx})">
-      <span><b>${String.fromCharCode(65 + opIdx)}.</b> ${op.txt}</span>
+      <span><b>${String.fromCharCode(65 + opIdx)}.</b> ${op.txt}${op.img ? `<br><img src="${op.img}" style="max-height:100px; border-radius:6px; margin-top:6px; border:1px solid #cbd5e1;">` : ''}</span>
     </label>
   `).join('');
 
@@ -1181,7 +1188,7 @@ async function renderSoal() {
       <tr>
         <td><span class="status-badge success">${top?top.nama:s.topikId}</span></td>
         <td><div>${s.teks}</div>${s.imgUrl ? `<img src="${s.imgUrl}" style="max-height:50px; border-radius:4px; margin-top:4px; border:1px solid #ddd;">` : ''}</td>
-        <td>${s.opsi.map((o,i) => `<b>${String.fromCharCode(65+i)}:</b> ${o}`).join('<br>')}</td>
+        <td>${s.opsi.map((o,i) => { const teks = typeof o === 'string' ? o : o.teks; const img = typeof o === 'string' ? '' : (o.img||''); return `<b>${String.fromCharCode(65+i)}:</b> ${teks}${img ? ` <img src="${img}" style="max-height:22px; vertical-align:middle; border-radius:3px; margin-left:4px;">` : ''}`; }).join('<br>')}</td>
         <td><strong>${String.fromCharCode(65 + s.kunci)}</strong></td>
         <td>
           <button class="btn btn-sm btn-outline" onclick="showSoalForm('${s._id}')">Edit</button>
@@ -1199,6 +1206,25 @@ async function showSoalForm(soalId = null) {
   if (topiks.length === 0) return alert("Buat topik terlebih dahulu!");
   const d = soalId ? list.find(s => s._id === soalId) : { topikId: topiks[0]._id, teks: '', imgUrl: '', opsi: ['', '', '', ''], kunci: 0 };
 
+  // Normalisasi opsi: dukung data lama (string biasa) maupun format baru {teks, img}
+  const normOpsi = [0,1,2,3,4].map(i => {
+    const o = d.opsi[i];
+    if (o === undefined) return { teks: '', img: '' };
+    return typeof o === 'string' ? { teks: o, img: '' } : { teks: o.teks || '', img: o.img || '' };
+  });
+
+  const optionRowHtml = (idx, label, required) => `
+    <div class="form-group">
+      <label>Opsi ${label}${required ? '' : ' (Opsional)'}</label>
+      <input type="text" id="s-op${idx}" value="${normOpsi[idx].teks}" ${required ? 'required' : ''}>
+      <div style="display:flex; gap:6px; margin-top:6px; align-items:center;">
+        <input type="file" id="s-opfile${idx}" accept="image/*" onchange="previewCompressOptionImage(event, ${idx})" style="flex:1; font-size:0.72rem;">
+        <input type="text" id="s-opimg${idx}" placeholder="atau link gambar opsi ${label}" value="${normOpsi[idx].img}" onchange="previewUrlOptionImage(this.value, ${idx})" style="flex:1; font-size:0.72rem;">
+      </div>
+      <div id="s-opimg-preview-${idx}" style="margin-top:4px;">${normOpsi[idx].img ? `<img src="${normOpsi[idx].img}" style="max-height:60px; border-radius:4px; border:1px solid #cbd5e1;">` : ''}</div>
+    </div>
+  `;
+
   openModal(`
     <h3>${soalId ? 'Edit' : 'Tambah'} Soal</h3>
     <form id="f-soal" style="margin-top:10px;">
@@ -1215,11 +1241,11 @@ async function showSoalForm(soalId = null) {
           ${d.imgUrl ? `<img src="${d.imgUrl}" style="max-height:120px; border-radius:6px; border:1px solid #cbd5e1;">` : ''}
         </div>
       </div>
-      <div class="form-group"><label>Opsi A</label><input type="text" id="s-op0" value="${d.opsi[0] || ''}" required></div>
-      <div class="form-group"><label>Opsi B</label><input type="text" id="s-op1" value="${d.opsi[1] || ''}" required></div>
-      <div class="form-group"><label>Opsi C</label><input type="text" id="s-op2" value="${d.opsi[2] || ''}" required></div>
-      <div class="form-group"><label>Opsi D</label><input type="text" id="s-op3" value="${d.opsi[3] || ''}" required></div>
-      <div class="form-group"><label>Opsi E (Opsional)</label><input type="text" id="s-op4" value="${d.opsi[4] || ''}"></div>
+      ${optionRowHtml(0, 'A', true)}
+      ${optionRowHtml(1, 'B', true)}
+      ${optionRowHtml(2, 'C', true)}
+      ${optionRowHtml(3, 'D', true)}
+      ${optionRowHtml(4, 'E', false)}
       <div class="form-group">
         <label>Kunci Jawaban Benar</label>
         <select id="s-kunci">
@@ -1236,14 +1262,43 @@ async function showSoalForm(soalId = null) {
 
   document.getElementById('f-soal').onsubmit = async (e) => {
     e.preventDefault();
-    const ops = [document.getElementById('s-op0').value.trim(), document.getElementById('s-op1').value.trim(), document.getElementById('s-op2').value.trim(), document.getElementById('s-op3').value.trim()];
-    const op4 = document.getElementById('s-op4').value.trim(); if (op4) ops.push(op4);
+    const opsTeks = [0,1,2,3].map(i => document.getElementById(`s-op${i}`).value.trim());
+    const opsImg = [0,1,2,3].map(i => document.getElementById(`s-opimg${i}`).value.trim());
+    const op4Teks = document.getElementById('s-op4').value.trim();
+    const op4Img = document.getElementById('s-opimg4').value.trim();
+    if (op4Teks) { opsTeks.push(op4Teks); opsImg.push(op4Img); }
+    const ops = opsTeks.map((teks, i) => ({ teks, img: opsImg[i] || '' }));
     const obj = { topikId: document.getElementById('s-topik').value, teks: document.getElementById('s-teks').value.trim(), imgUrl: document.getElementById('s-img').value.trim(), opsi: ops, kunci: parseInt(document.getElementById('s-kunci').value) };
     showLoading(true);
     if (soalId) await DB.update('soal', soalId, obj); else await DB.add('soal', obj);
     showLoading(false);
     closeModal(); renderSoal();
   };
+}
+
+function previewCompressOptionImage(event, idx) {
+  const file = event.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const img = new Image(); img.src = e.target.result;
+    img.onload = function() {
+      const canvas = document.createElement('canvas'); const maxDim = 350;
+      let width = img.width, height = img.height;
+      if (width > height) { if (width > maxDim) { height *= maxDim / width; width = maxDim; } }
+      else { if (height > maxDim) { width *= maxDim / height; height = maxDim; } }
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height);
+      const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.6);
+      document.getElementById(`s-opimg${idx}`).value = compressedDataUrl;
+      document.getElementById(`s-opimg-preview-${idx}`).innerHTML = `<img src="${compressedDataUrl}" style="max-height:60px; border-radius:4px; border:1px solid #cbd5e1;">`;
+    };
+  };
+  reader.readAsDataURL(file);
+}
+
+function previewUrlOptionImage(url, idx) {
+  const container = document.getElementById(`s-opimg-preview-${idx}`);
+  if (container) container.innerHTML = url ? `<img src="${url}" style="max-height:60px; border-radius:4px; border:1px solid #cbd5e1;">` : '';
 }
 
 function previewCompressLocalImage(event) {
@@ -1292,15 +1347,18 @@ function handleUploadSoal(e) {
       const tInput = r[0]?String(r[0]).trim():'', teks = r[1]?String(r[1]).trim():'', imgUrl = r[2]?String(r[2]).trim():'';
       const opA = r[3]?String(r[3]).trim():'', opB = r[4]?String(r[4]).trim():'', opC = r[5]?String(r[5]).trim():'', opD = r[6]?String(r[6]).trim():'', opE = r[7]?String(r[7]).trim():'';
       const kunciStr = r[8]?String(r[8]).trim().toUpperCase():'';
+      const imgA = r[9]?String(r[9]).trim():'', imgB = r[10]?String(r[10]).trim():'', imgC = r[11]?String(r[11]).trim():'', imgD = r[12]?String(r[12]).trim():'', imgE = r[13]?String(r[13]).trim():'';
       const matchedTopik = topiks.find(t => t.nama.toLowerCase() === tInput.toLowerCase()) || topiks[0];
       let err = []; if (!teks) err.push("Teks Kosong");
-      const ops = [opA, opB, opC, opD]; if(opE) ops.push(opE);
-      if (ops.filter(o => o!=='').length < 4) err.push("Opsi < 4");
+      const opsTeks = [opA, opB, opC, opD]; const opsImg = [imgA, imgB, imgC, imgD];
+      if (opE) { opsTeks.push(opE); opsImg.push(imgE); }
+      if (opsTeks.filter(o => o!=='').length < 4) err.push("Opsi < 4");
       const kunciIdx = ['A','B','C','D','E'].indexOf(kunciStr);
-      if (kunciIdx === -1 || kunciIdx >= ops.length) err.push("Kunci Invalid");
+      if (kunciIdx === -1 || kunciIdx >= opsTeks.length) err.push("Kunci Invalid");
       const isValid = err.length === 0;
-      tempUploadSoal.push({ topikId: matchedTopik?matchedTopik._id:null, teks, imgUrl, opsi: ops, kunci: kunciIdx, isValid: isValid && !!matchedTopik });
-      tbody.innerHTML += `<tr><td>${i}</td><td>${matchedTopik?matchedTopik.nama:tInput}</td><td>${teks}</td><td>${ops.join(' | ')}</td><td>${kunciStr}</td><td><span class="status-badge ${isValid?'success':'danger'}">${isValid?'Valid':err.join(', ')}</span></td></tr>`;
+      const opsObj = opsTeks.map((teks2, idx) => ({ teks: teks2, img: opsImg[idx] || '' }));
+      tempUploadSoal.push({ topikId: matchedTopik?matchedTopik._id:null, teks, imgUrl, opsi: opsObj, kunci: kunciIdx, isValid: isValid && !!matchedTopik });
+      tbody.innerHTML += `<tr><td>${i}</td><td>${matchedTopik?matchedTopik.nama:tInput}</td><td>${teks}</td><td>${opsTeks.join(' | ')}</td><td>${kunciStr}</td><td><span class="status-badge ${isValid?'success':'danger'}">${isValid?'Valid':err.join(', ')}</span></td></tr>`;
     }
     document.getElementById('preview-soal-box').style.display = 'block';
   };
