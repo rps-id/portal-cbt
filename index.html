@@ -823,7 +823,9 @@ async function startQuizWithTarget(foundUjian) {
     studentAnswers = existing.answers || {};
     currentQuestionIndex = existing.currentIndex || 0;
     quizStartTimeStr = existing.startTimeStr;
-    quizDeadline = existing.deadline;
+    // Fallback untuk progres format lama (sebelum ada field 'deadline'):
+    // pakai sisa waktu yang tersimpan terakhir sebagai basis, supaya tidak NaN.
+    quizDeadline = existing.deadline || (Date.now() + (existing.timeRemaining || 0) * 1000);
     violationCount = existing.violationCount || 0;
 
     const remaining = Math.floor((quizDeadline - Date.now()) / 1000);
