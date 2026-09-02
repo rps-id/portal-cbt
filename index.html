@@ -211,6 +211,7 @@
         <button type="button" class="sidebar-btn" data-page="page-soal">❓ Bank Soal</button>
         <button type="button" class="sidebar-btn" data-page="page-ujian">📝 Paket Ujian</button>
         <button type="button" class="sidebar-btn" data-page="page-token">🔑 Token Ujian</button>
+        <button type="button" class="sidebar-btn" data-page="page-monitoring">👁️ Monitoring</button>
         <button type="button" class="sidebar-btn" data-page="page-hasil">📊 Hasil Ujian</button>
 
         <div style="margin-top: auto; padding-top: 15px; border-top: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 5px;">
@@ -362,6 +363,18 @@
           </div>
         </div>
 
+        <!-- 4f0. MONITORING -->
+        <div id="page-monitoring" class="admin-panel-page">
+          <h3 style="margin-bottom: 15px;">👁️ Siswa Sedang Mengerjakan Ujian</h3>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 15px;">Daftar ini otomatis update secara realtime. Sisa waktu dihitung dari jam sebenarnya, terus berjalan walau siswa membuka/menutup aplikasi.</p>
+          <div class="table-container">
+            <table>
+              <thead><tr><th>Nama</th><th>Kelas</th><th>Ujian</th><th>Sisa Waktu</th><th>Pelanggaran</th><th>Aksi</th></tr></thead>
+              <tbody id="tbody-monitoring"></tbody>
+            </table>
+          </div>
+        </div>
+
         <!-- 4f. HASIL -->
         <div id="page-hasil" class="admin-panel-page">
           <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap;">
@@ -474,6 +487,11 @@ let quizStartTimeStr = '';
 let hasilCache = [];       // diisi oleh listener realtime
 let unsubscribeHasil = null;
 let isSubmittingQuiz = false;   // mencegah submit ganda
+let quizDeadline = null;        // waktu batas ujian (epoch ms) - dasar perhitungan sisa waktu
+let progressListenerUnsub = null; // dengar perintah "hentikan" dari admin
+let unsubscribeMonitoring = null;
+let monitoringData = [];
+let monitoringTickInterval = null;
 
 // INISIALISASI DATA AWAL JIKA KOLEKSI MASIH KOSONG
 async function initDB() {
@@ -585,11 +603,19 @@ document.addEventListener('DOMContentLoaded', () => {
       const pageEl = document.getElementById(pageId);
       if (pageEl) pageEl.classList.add('active');
 
+      // Hentikan listener/interval realtime dari halaman lain supaya tidak boros saat tidak dilihat
+      if (pageId !== 'page-hasil' && unsubscribeHasil) { unsubscribeHasil(); unsubscribeHasil = null; }
+      if (pageId !== 'page-monitoring') {
+        if (unsubscribeMonitoring) { unsubscribeMonitoring(); unsubscribeMonitoring = null; }
+        if (monitoringTickInterval) { clearInterval(monitoringTickInterval); monitoringTickInterval = null; }
+      }
+
       if (pageId === 'page-peserta') renderPeserta();
       if (pageId === 'page-topik') renderTopik();
       if (pageId === 'page-soal') renderSoal();
       if (pageId === 'page-ujian') renderUjian();
       if (pageId === 'page-token') renderToken();
+      if (pageId === 'page-monitoring') startMonitoringPage();
       if (pageId === 'page-hasil') startHasilPage();
     };
   });
@@ -684,12 +710,15 @@ function openAdminModalDirect() {
 
 function logoutAdminAct() {
   if (unsubscribeHasil) { unsubscribeHasil(); unsubscribeHasil = null; }
+  if (unsubscribeMonitoring) { unsubscribeMonitoring(); unsubscribeMonitoring = null; }
+  if (monitoringTickInterval) { clearInterval(monitoringTickInterval); monitoringTickInterval = null; }
   showScreen('screen-siswa');
   document.getElementById('header-title').innerText = "Portal CBT & Evaluasi Siswa";
   document.getElementById('role-badge').innerText = "Siswa";
 }
 
 function logoutSiswaAct() {
+  if (progressListenerUnsub) { progressListenerUnsub(); progressListenerUnsub = null; }
   currentSiswa = null;
   document.getElementById('form-login-siswa').reset();
   showScreen('screen-siswa');
@@ -701,8 +730,12 @@ async function loadSiswaDashboard() {
   document.getElementById('dash-siswa-kelas').innerText = `Kelas: ${currentSiswa.kelas}`;
 
   showLoading(true);
-  const [allUjian, allTopik, hasilList] = await Promise.all([DB.getAll('ujian'), DB.getAll('topik'), DB.getAll('hasil')]);
+  const [allUjian, allTopik, hasilList, progressSnap] = await Promise.all([
+    DB.getAll('ujian'), DB.getAll('topik'), DB.getAll('hasil'),
+    firestore.collection('progress').where('siswaId', '==', currentSiswa._id).get()
+  ]);
   showLoading(false);
+  const progressList = progressSnap.docs.map(d => ({ _id: d.id, ...d.data() }));
 
   const availableUjian = allUjian.filter(u => !u.kelas || u.kelas.length === 0 || u.kelas.includes(currentSiswa.kelas));
   const container = document.getElementById('container-daftar-ujian');
@@ -715,6 +748,7 @@ async function loadSiswaDashboard() {
   container.innerHTML = availableUjian.map(u => {
     const topikObj = allTopik.find(t => t._id === u.topikId);
     const hasilRecord = hasilList.find(h => h.ujianId === u._id && h.nama === currentSiswa.nama);
+    const inProgress = progressList.find(p => p.ujianId === u._id);
 
     return `
       <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
@@ -727,7 +761,9 @@ async function loadSiswaDashboard() {
         <div>
           ${hasilRecord
             ? `<span class="status-badge success" style="padding: 6px 12px;">✅ ${u.tampilHasil ? 'Nilai: ' + hasilRecord.nilai : 'Sudah Dikerjakan'}</span>`
-            : `<button class="btn btn-sm" onclick="promptTokenModal('${u._id}')">🚀 Kerjakan Soal</button>`
+            : inProgress
+              ? `<button class="btn btn-sm btn-warning" onclick="promptTokenModal('${u._id}', true)">▶️ Lanjutkan Ujian</button>`
+              : `<button class="btn btn-sm" onclick="promptTokenModal('${u._id}', false)">🚀 Kerjakan Soal</button>`
           }
         </div>
       </div>
@@ -735,7 +771,7 @@ async function loadSiswaDashboard() {
   }).join('');
 }
 
-async function promptTokenModal(ujianId) {
+async function promptTokenModal(ujianId, isResume = false) {
   showLoading(true);
   const allUjian = await DB.getAll('ujian');
   showLoading(false);
@@ -743,14 +779,14 @@ async function promptTokenModal(ujianId) {
   if (!selectedUjianTarget) return alert("Paket Ujian tidak ditemukan!");
 
   openModal(`
-    <h3>Konfirmasi Token Ujian</h3>
-    <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:15px;">Ujian: <b>${selectedUjianTarget.nama}</b></p>
+    <h3>${isResume ? 'Lanjutkan Ujian' : 'Konfirmasi Token Ujian'}</h3>
+    <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:15px;">Ujian: <b>${selectedUjianTarget.nama}</b>${isResume ? '<br><span style="color:var(--warning);">⏳ Anda memiliki progres ujian ini yang belum selesai. Waktu terus berjalan sejak ujian dimulai.</span>' : ''}</p>
     <form id="form-input-token">
       <div class="form-group">
         <label>Masukkan Token dari Guru/Admin</label>
         <input type="text" id="input-token-code" placeholder="Masukkan 6 karakter token..." style="text-transform:uppercase; letter-spacing:2px; font-weight:bold; text-align:center;" required autofocus>
       </div>
-      <button type="submit" class="btn btn-success" style="width:100%;">Mulai Kerjakan Soal ➡️</button>
+      <button type="submit" class="btn btn-success" style="width:100%;">${isResume ? 'Lanjutkan Ujian ➡️' : 'Mulai Kerjakan Soal ➡️'}</button>
     </form>
   `);
 
@@ -786,8 +822,18 @@ async function startQuizWithTarget(foundUjian) {
     currentQuestions = existing.questions;
     studentAnswers = existing.answers || {};
     currentQuestionIndex = existing.currentIndex || 0;
-    quizTimeRemaining = existing.timeRemaining;
     quizStartTimeStr = existing.startTimeStr;
+    quizDeadline = existing.deadline;
+    violationCount = existing.violationCount || 0;
+
+    const remaining = Math.floor((quizDeadline - Date.now()) / 1000);
+    if (remaining <= 0) {
+      alert("Waktu ujian ini sudah habis saat Anda meninggalkan halaman. Jawaban yang sempat tersimpan akan otomatis dikumpulkan.");
+      quizTimeRemaining = 0;
+      await finishQuiz();
+      return;
+    }
+    quizTimeRemaining = remaining;
     startQuizInterface();
     return;
   }
@@ -800,6 +846,7 @@ async function startQuizWithTarget(foundUjian) {
   if (filteredSoal.length === 0) return alert("Belum ada soal untuk topik ujian ini!");
 
   quizStartTimeStr = new Date().toLocaleTimeString('id-ID');
+  quizDeadline = Date.now() + foundUjian.durasi * 60000;
 
   if (foundUjian.acakSoal) {
     filteredSoal = filteredSoal.sort(() => Math.random() - 0.5);
@@ -831,17 +878,32 @@ async function saveProgress() {
   try {
     await firestore.collection('progress').doc(progressDocId()).set({
       siswaId: currentSiswa._id,
+      nama: currentSiswa.nama,
+      kelas: currentSiswa.kelas,
       ujianId: currentUjian._id,
+      ujianNama: currentUjian.nama,
       questions: currentQuestions,
       answers: studentAnswers,
       currentIndex: currentQuestionIndex,
-      timeRemaining: quizTimeRemaining,
+      deadline: quizDeadline,
+      violationCount: violationCount,
       startTimeStr: quizStartTimeStr,
       updatedAt: new Date().toISOString()
-    });
+    }, { merge: true }); // merge:true supaya flag "stopped" yang diset admin tidak tertimpa
   } catch (err) {
     console.error("Gagal autosave progress:", err);
   }
+}
+
+// Dengarkan perintah "Hentikan" dari admin (halaman Monitoring) secara realtime
+function listenForAdminStop() {
+  if (progressListenerUnsub) progressListenerUnsub();
+  progressListenerUnsub = firestore.collection('progress').doc(progressDocId()).onSnapshot(doc => {
+    if (doc.exists && doc.data().stopped === true && !isSubmittingQuiz) {
+      alert("Ujian Anda dihentikan oleh Admin/Guru. Jawaban yang sudah dikerjakan akan otomatis dikumpulkan.");
+      finishQuiz();
+    }
+  });
 }
 
 async function loadProgress(siswaId, ujianId) {
@@ -872,7 +934,9 @@ function startQuizInterface() {
 
   if (quizTimerInterval) clearInterval(quizTimerInterval);
   quizTimerInterval = setInterval(() => {
-    quizTimeRemaining--;
+    // Sisa waktu selalu dihitung ulang dari deadline (jam sebenarnya),
+    // bukan pengurangan angka di memori -> tetap akurat walau app sempat ditutup.
+    quizTimeRemaining = Math.max(0, Math.floor((quizDeadline - Date.now()) / 1000));
     const h = Math.floor(quizTimeRemaining / 3600);
     const m = Math.floor((quizTimeRemaining % 3600) / 60);
     const s = quizTimeRemaining % 60;
@@ -887,6 +951,8 @@ function startQuizInterface() {
       saveProgress(); // autosave berkala, tidak setiap detik supaya hemat kuota
     }
   }, 1000);
+
+  listenForAdminStop();
 }
 
 function renderQuizNavGrid() {
@@ -935,6 +1001,7 @@ async function finishQuiz() {
   if (finishBtn) { finishBtn.disabled = true; finishBtn.innerText = 'Menyimpan...'; }
 
   if (quizTimerInterval) clearInterval(quizTimerInterval);
+  if (progressListenerUnsub) { progressListenerUnsub(); progressListenerUnsub = null; }
 
   let correctCount = 0;
   const review = [];
@@ -1490,6 +1557,44 @@ async function generateToken() {
 async function toggleToken(id, newVal) { showLoading(true); await DB.update('token', id, { active: newVal }); showLoading(false); renderToken(); }
 
 // Halaman Hasil Ujian memakai listener realtime supaya nilai baru langsung muncul
+// ===== MONITORING: admin melihat siswa yang sedang mengerjakan ujian secara realtime =====
+function startMonitoringPage() {
+  if (unsubscribeMonitoring) unsubscribeMonitoring();
+  unsubscribeMonitoring = firestore.collection('progress').onSnapshot(snap => {
+    monitoringData = snap.docs.map(d => ({ _id: d.id, ...d.data() })).filter(p => !p.stopped);
+    renderMonitoring();
+  });
+  if (monitoringTickInterval) clearInterval(monitoringTickInterval);
+  monitoringTickInterval = setInterval(renderMonitoring, 1000); // update tampilan sisa waktu tiap detik
+}
+
+function renderMonitoring() {
+  const tbody = document.getElementById('tbody-monitoring');
+  if (!tbody) return;
+  tbody.innerHTML = monitoringData.map(p => {
+    const remaining = Math.max(0, Math.floor(((p.deadline || 0) - Date.now()) / 1000));
+    const h = Math.floor(remaining / 3600), m = Math.floor((remaining % 3600) / 60), s = remaining % 60;
+    const timeStr = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    return `
+      <tr>
+        <td><strong>${p.nama || '-'}</strong></td>
+        <td>${p.kelas || '-'}</td>
+        <td>${p.ujianNama || '-'}</td>
+        <td><strong style="color:${remaining<300?'var(--danger)':'var(--primary)'};">${timeStr}</strong></td>
+        <td><span class="status-badge ${p.violationCount>0?'danger':'success'}">${p.violationCount||0}x</span></td>
+        <td><button class="btn btn-sm btn-danger" onclick="stopStudentExam('${p._id}')">⛔ Hentikan</button></td>
+      </tr>
+    `;
+  }).join('') || '<tr><td colspan="6" style="text-align:center;">Tidak ada siswa yang sedang mengerjakan ujian saat ini.</td></tr>';
+}
+
+async function stopStudentExam(progressId) {
+  if (!confirm("Hentikan ujian siswa ini sekarang? Jawaban yang sudah dikerjakan akan otomatis dikumpulkan sebagai nilai akhir.")) return;
+  showLoading(true);
+  await firestore.collection('progress').doc(progressId).update({ stopped: true });
+  showLoading(false);
+}
+
 function startHasilPage() {
   if (unsubscribeHasil) unsubscribeHasil();
   unsubscribeHasil = DB.listenHasil((list) => { hasilCache = list; renderHasil(); });
