@@ -369,7 +369,7 @@
           <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 15px;">Daftar ini otomatis update secara realtime. Sisa waktu dihitung dari jam sebenarnya, terus berjalan walau siswa membuka/menutup aplikasi.</p>
           <div class="table-container">
             <table>
-              <thead><tr><th>Nama</th><th>Kelas</th><th>Ujian</th><th>Sisa Waktu</th><th>Pelanggaran</th><th>Aksi</th></tr></thead>
+              <thead><tr><th>Nama</th><th>Kelas</th><th>Ujian</th><th>Nilai Saat Ini</th><th>Sisa Waktu</th><th>Pelanggaran</th><th>Aksi</th></tr></thead>
               <tbody id="tbody-monitoring"></tbody>
             </table>
           </div>
@@ -522,6 +522,30 @@ async function initDB() {
   showLoading(false);
 }
 
+// ===== PERSISTENSI SESI (supaya tidak kembali ke menu awal saat refresh) =====
+async function restoreSession() {
+  const role = sessionStorage.getItem('cbt_role');
+  if (role === 'admin') {
+    showScreen('screen-admin');
+    document.getElementById('header-title').innerText = "Dashboard Admin System";
+    document.getElementById('role-badge').innerText = "Admin / Guru";
+    renderPeserta();
+  } else if (role === 'siswa') {
+    const savedSiswa = sessionStorage.getItem('cbt_siswa');
+    if (!savedSiswa) return;
+    currentSiswa = JSON.parse(savedSiswa);
+    const activeUjianId = sessionStorage.getItem('cbt_active_ujian');
+    if (activeUjianId) {
+      showLoading(true);
+      const allUjian = await DB.getAll('ujian');
+      showLoading(false);
+      const uj = allUjian.find(u => u._id === activeUjianId);
+      if (uj) { await startQuizWithTarget(uj); return; }
+    }
+    loadSiswaDashboard();
+  }
+}
+
 function openModal(html) {
   const box = document.getElementById('modal-box');
   const overlay = document.getElementById('modal-overlay');
@@ -553,8 +577,9 @@ function showScreen(screenId) {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  initDB();
+document.addEventListener('DOMContentLoaded', async () => {
+  await initDB();
+  await restoreSession(); // pulihkan login & ujian yang sedang berjalan setelah refresh
 
   const overlay = document.getElementById('modal-overlay');
   if (overlay) {
@@ -578,6 +603,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       currentSiswa = foundSiswa;
+      sessionStorage.setItem('cbt_role', 'siswa');
+      sessionStorage.setItem('cbt_siswa', JSON.stringify(foundSiswa));
       loadSiswaDashboard();
     };
   }
@@ -698,6 +725,7 @@ function openAdminModalDirect() {
     showLoading(false);
     if (p === realPass) {
       closeModal();
+      sessionStorage.setItem('cbt_role', 'admin');
       showScreen('screen-admin');
       document.getElementById('header-title').innerText = "Dashboard Admin System";
       document.getElementById('role-badge').innerText = "Admin / Guru";
@@ -709,6 +737,7 @@ function openAdminModalDirect() {
 }
 
 function logoutAdminAct() {
+  sessionStorage.removeItem('cbt_role');
   if (unsubscribeHasil) { unsubscribeHasil(); unsubscribeHasil = null; }
   if (unsubscribeMonitoring) { unsubscribeMonitoring(); unsubscribeMonitoring = null; }
   if (monitoringTickInterval) { clearInterval(monitoringTickInterval); monitoringTickInterval = null; }
@@ -718,6 +747,9 @@ function logoutAdminAct() {
 }
 
 function logoutSiswaAct() {
+  sessionStorage.removeItem('cbt_role');
+  sessionStorage.removeItem('cbt_siswa');
+  sessionStorage.removeItem('cbt_active_ujian');
   if (progressListenerUnsub) { progressListenerUnsub(); progressListenerUnsub = null; }
   currentSiswa = null;
   document.getElementById('form-login-siswa').reset();
@@ -812,6 +844,7 @@ async function startQuizWithTarget(foundUjian) {
   currentUjian = foundUjian;
   violationCount = 0;
   isSubmittingQuiz = false;
+  sessionStorage.setItem('cbt_active_ujian', foundUjian._id);
 
   // Cek apakah ada progress tersimpan (misalnya ujian sebelumnya sempat terputus)
   showLoading(true);
@@ -1039,6 +1072,7 @@ async function finishQuiz() {
       review
     });
     await clearProgress(); // ujian resmi selesai, progress sementara dihapus
+    sessionStorage.removeItem('cbt_active_ujian');
   } catch (err) {
     console.error(err);
     showLoading(false);
@@ -1444,7 +1478,7 @@ async function confirmSaveSoalUpload() {
 
 async function renderUjian() {
   showLoading(true);
-  const [list, topiks] = await Promise.all([DB.getAll('ujian'), DB.getAll('topik')]);
+  const [list, topiks, soalAll] = await Promise.all([DB.getAll('ujian'), DB.getAll('topik'), DB.getAll('soal')]);
   showLoading(false);
   const searchVal = (document.getElementById('search-ujian')?.value || '').toLowerCase().trim();
   const filteredList = searchVal ? list.filter(u => u.nama.toLowerCase().includes(searchVal)) : list;
@@ -1452,13 +1486,15 @@ async function renderUjian() {
   if (!tbody) return;
   tbody.innerHTML = filteredList.map((u) => {
     const top = topiks.find(t => t._id === u.topikId);
+    const jumlahSoal = soalAll.filter(s => s.topikId === u.topikId).length;
+    const poin = u.poinPerSoal ?? (jumlahSoal > 0 ? +(100/jumlahSoal).toFixed(2) : 0);
     return `
       <tr>
         <td><strong>${u.nama}</strong><br><small style="color:var(--text-muted);">${top?top.nama:u.topikId}</small></td>
         <td>${(u.kelas||[]).join(', ')}</td>
         <td>${u.durasi} Menit</td>
         <td><small>${u.start.replace('T',' ')} s.d ${u.end.replace('T',' ')}</small></td>
-        <td><small>Acak Soal: ${u.acakSoal?'✅':'❌'} | Acak Opsi: ${u.acakOpsi?'✅':'❌'} | Tampil Hasil: ${u.tampilHasil?'✅':'❌'}</small></td>
+        <td><small>Acak Soal: ${u.acakSoal?'✅':'❌'} | Acak Opsi: ${u.acakOpsi?'✅':'❌'} | Tampil Hasil: ${u.tampilHasil?'✅':'❌'}<br>🔢 ${jumlahSoal} soal (${poin} poin/soal)</small></td>
         <td>
           <button class="btn btn-sm btn-outline" onclick="showUjianForm('${u._id}')">Edit</button>
           <button class="btn btn-sm btn-danger" onclick="deleteUjian('${u._id}')">Hapus</button>
@@ -1468,18 +1504,33 @@ async function renderUjian() {
   }).join('') || '<tr><td colspan="6" style="text-align:center;">Belum ada paket ujian.</td></tr>';
 }
 
+let tempSoalCountMap = {};
+
 async function showUjianForm(editId = null) {
   showLoading(true);
-  const [list, topiks, peserta] = await Promise.all([DB.getAll('ujian'), DB.getAll('topik'), DB.getAll('peserta')]);
+  const [list, topiks, peserta, soalAll] = await Promise.all([DB.getAll('ujian'), DB.getAll('topik'), DB.getAll('peserta'), DB.getAll('soal')]);
   showLoading(false);
   const kelasSet = [...new Set(peserta.map(p => p.kelas))]; if (topiks.length === 0) return alert("Buat topik terlebih dahulu!");
-  const d = editId ? list.find(u => u._id === editId) : { nama: 'Ujian Baru', topikId: topiks[0]._id, kelas: [], durasi: 60, start: new Date().toISOString().slice(0,16), end: new Date(Date.now()+86400000).toISOString().slice(0,16), acakSoal: true, acakOpsi: true, tampilHasil: true };
+  const d = editId ? list.find(u => u._id === editId) : { nama: 'Ujian Baru', topikId: topiks[0]._id, kelas: [], durasi: 60, start: new Date().toISOString().slice(0,16), end: new Date(Date.now()+86400000).toISOString().slice(0,16), acakSoal: true, acakOpsi: true, tampilHasil: true, poinPerSoal: null };
+
+  tempSoalCountMap = {};
+  topiks.forEach(t => { tempSoalCountMap[t._id] = soalAll.filter(s => s.topikId === t._id).length; });
+  const initialCount = tempSoalCountMap[d.topikId] || 0;
+  const initialSuggest = initialCount > 0 ? +(100 / initialCount).toFixed(2) : 0;
 
   openModal(`
     <h3>${editId?'Edit':'Buat'} Paket Ujian</h3>
     <form id="f-ujian" style="margin-top:10px;">
       <div class="form-group"><label>Nama Ujian</label><input type="text" id="u-nama" value="${d.nama}" required></div>
-      <div class="form-group"><label>Topik Soal</label><select id="u-topik">${topiks.map(t => `<option value="${t._id}" ${t._id===d.topikId?'selected':''}>${t.nama}</option>`).join('')}</select></div>
+      <div class="form-group"><label>Topik Soal</label><select id="u-topik" onchange="updateSoalCountInfo()">${topiks.map(t => `<option value="${t._id}" ${t._id===d.topikId?'selected':''}>${t.nama}</option>`).join('')}</select></div>
+      <div class="form-group" style="background:#f0f9ff; padding:10px 12px; border-radius:8px; border:1px solid #bae6fd;">
+        <p style="font-size:0.85rem; margin-bottom:4px;">📊 Jumlah Soal di Topik Ini: <strong id="u-jumlah-soal">${initialCount}</strong> soal</p>
+        <p style="font-size:0.78rem; color:var(--text-muted);">Saran poin per soal (jika nilai maksimal 100): <strong id="u-saran-poin">${initialSuggest}</strong> poin/soal</p>
+      </div>
+      <div class="form-group">
+        <label>Poin per Soal (opsional, catatan referensi guru)</label>
+        <input type="number" step="0.01" id="u-poin-per-soal" value="${d.poinPerSoal ?? initialSuggest}" placeholder="Contoh: 5" oninput="this.dataset.manuallyEdited='true'">
+      </div>
       <div class="form-group">
         <label>Target Kelas</label>
         <div style="max-height:80px; overflow-y:auto; border:1px solid #cbd5e1; padding:6px; border-radius:6px;">
@@ -1500,12 +1551,23 @@ async function showUjianForm(editId = null) {
 
   document.getElementById('f-ujian').onsubmit = async (e) => {
     e.preventDefault(); const selectedK = Array.from(document.querySelectorAll('input[name="u-kelas"]:checked')).map(cb => cb.value);
-    const obj = { nama: document.getElementById('u-nama').value.trim(), topikId: document.getElementById('u-topik').value, kelas: selectedK, durasi: parseInt(document.getElementById('u-durasi').value), start: document.getElementById('u-start').value, end: document.getElementById('u-end').value, acakSoal: document.getElementById('u-acaksoal').checked, acakOpsi: document.getElementById('u-acakopsi').checked, tampilHasil: document.getElementById('u-tampilhasil').checked };
+    const poinInput = document.getElementById('u-poin-per-soal').value.trim();
+    const obj = { nama: document.getElementById('u-nama').value.trim(), topikId: document.getElementById('u-topik').value, kelas: selectedK, durasi: parseInt(document.getElementById('u-durasi').value), start: document.getElementById('u-start').value, end: document.getElementById('u-end').value, acakSoal: document.getElementById('u-acaksoal').checked, acakOpsi: document.getElementById('u-acakopsi').checked, tampilHasil: document.getElementById('u-tampilhasil').checked, poinPerSoal: poinInput ? parseFloat(poinInput) : null };
     showLoading(true);
     if (editId) await DB.update('ujian', editId, obj); else await DB.add('ujian', obj);
     showLoading(false);
     closeModal(); renderUjian();
   };
+}
+
+function updateSoalCountInfo() {
+  const topikId = document.getElementById('u-topik').value;
+  const count = tempSoalCountMap[topikId] || 0;
+  const suggest = count > 0 ? +(100 / count).toFixed(2) : 0;
+  document.getElementById('u-jumlah-soal').innerText = count;
+  document.getElementById('u-saran-poin').innerText = suggest;
+  const poinInputEl = document.getElementById('u-poin-per-soal');
+  if (poinInputEl && !poinInputEl.dataset.manuallyEdited) poinInputEl.value = suggest;
 }
 
 async function deleteUjian(id) { if (confirm("Hapus paket ujian ini?")) { showLoading(true); await DB.remove('ujian', id); showLoading(false); renderUjian(); } }
@@ -1570,6 +1632,16 @@ function startMonitoringPage() {
   monitoringTickInterval = setInterval(renderMonitoring, 1000); // update tampilan sisa waktu tiap detik
 }
 
+function computeLiveScore(p) {
+  if (!p.questions || !p.questions.length || !p.answers) return 0;
+  let correct = 0;
+  p.questions.forEach((q, idx) => {
+    const ans = p.answers[idx];
+    if (ans !== undefined && q.options[ans] && q.options[ans].isCorrect) correct++;
+  });
+  return Math.round((correct / p.questions.length) * 100);
+}
+
 function renderMonitoring() {
   const tbody = document.getElementById('tbody-monitoring');
   if (!tbody) return;
@@ -1577,17 +1649,19 @@ function renderMonitoring() {
     const remaining = Math.max(0, Math.floor(((p.deadline || 0) - Date.now()) / 1000));
     const h = Math.floor(remaining / 3600), m = Math.floor((remaining % 3600) / 60), s = remaining % 60;
     const timeStr = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    const liveScore = computeLiveScore(p);
     return `
       <tr>
         <td><strong>${p.nama || '-'}</strong></td>
         <td>${p.kelas || '-'}</td>
         <td>${p.ujianNama || '-'}</td>
+        <td><strong style="color:var(--success); font-size:1rem;">${liveScore}</strong></td>
         <td><strong style="color:${remaining<300?'var(--danger)':'var(--primary)'};">${timeStr}</strong></td>
         <td><span class="status-badge ${p.violationCount>0?'danger':'success'}">${p.violationCount||0}x</span></td>
         <td><button class="btn btn-sm btn-danger" onclick="stopStudentExam('${p._id}')">⛔ Hentikan</button></td>
       </tr>
     `;
-  }).join('') || '<tr><td colspan="6" style="text-align:center;">Tidak ada siswa yang sedang mengerjakan ujian saat ini.</td></tr>';
+  }).join('') || '<tr><td colspan="7" style="text-align:center;">Tidak ada siswa yang sedang mengerjakan ujian saat ini.</td></tr>';
 }
 
 async function stopStudentExam(progressId) {
