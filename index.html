@@ -253,6 +253,7 @@
           <div class="table-container">
             <table>
               <thead><tr>
+                <th>No</th>
                 <th onclick="setPesertaSort('kelas')" style="cursor:pointer; user-select:none;">Kelas <span id="sort-icon-kelas"></span></th>
                 <th onclick="setPesertaSort('nama')" style="cursor:pointer; user-select:none;">Nama Peserta <span id="sort-icon-nama"></span></th>
                 <th onclick="setPesertaSort('user')" style="cursor:pointer; user-select:none;">Username <span id="sort-icon-user"></span></th>
@@ -271,7 +272,7 @@
           </div>
           <div class="table-container">
             <table>
-              <thead><tr><th>ID Topik</th><th>Nama Topik</th><th>Mata Pelajaran / Keterangan</th><th>Aksi</th></tr></thead>
+              <thead><tr><th>No</th><th>ID Topik</th><th>Nama Topik</th><th>Mata Pelajaran / Keterangan</th><th>Aksi</th></tr></thead>
               <tbody id="tbody-topik"></tbody>
             </table>
           </div>
@@ -308,7 +309,7 @@
 
           <div class="table-container">
             <table>
-              <thead><tr><th>Topik</th><th>Teks Soal & Gambar</th><th>Opsi Jawaban</th><th>Kunci</th><th>Aksi</th></tr></thead>
+              <thead><tr><th>No</th><th>Topik</th><th>Teks Soal & Gambar</th><th>Opsi Jawaban</th><th>Kunci</th><th>Aksi</th></tr></thead>
               <tbody id="tbody-soal"></tbody>
             </table>
           </div>
@@ -325,7 +326,7 @@
           </div>
           <div class="table-container">
             <table>
-              <thead><tr><th>Nama Ujian / Topik</th><th>Kelas Target</th><th>Durasi</th><th>Waktu Akses</th><th>Pengaturan Acak & Hasil</th><th>Aksi</th></tr></thead>
+              <thead><tr><th>No</th><th>Nama Ujian / Topik</th><th>Kelas Target</th><th>Durasi</th><th>Waktu Akses</th><th>Pengaturan Acak & Hasil</th><th>Aksi</th></tr></thead>
               <tbody id="tbody-ujian"></tbody>
             </table>
           </div>
@@ -357,7 +358,7 @@
           </div>
           <div class="table-container">
             <table>
-              <thead><tr><th>Token</th><th>Paket Ujian</th><th>Masa Berlaku</th><th>Status</th><th>Aksi</th></tr></thead>
+              <thead><tr><th>No</th><th>Token</th><th>Paket Ujian</th><th>Masa Berlaku</th><th>Status</th><th>Aksi</th></tr></thead>
               <tbody id="tbody-token"></tbody>
             </table>
           </div>
@@ -369,7 +370,7 @@
           <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 15px;">Daftar ini otomatis update secara realtime. Sisa waktu dihitung dari jam sebenarnya, terus berjalan walau siswa membuka/menutup aplikasi.</p>
           <div class="table-container">
             <table>
-              <thead><tr><th>Nama</th><th>Kelas</th><th>Ujian</th><th>Nilai Saat Ini</th><th>Sisa Waktu</th><th>Pelanggaran</th><th>Aksi</th></tr></thead>
+              <thead><tr><th>No</th><th>Nama</th><th>Kelas</th><th>Ujian</th><th>Nilai Saat Ini</th><th>Sisa Waktu</th><th>Pelanggaran</th><th>Aksi</th></tr></thead>
               <tbody id="tbody-monitoring"></tbody>
             </table>
           </div>
@@ -393,7 +394,7 @@
 
           <div class="table-container">
             <table>
-              <thead><tr><th>Nama Siswa</th><th>Kelas</th><th>Nilai</th><th>Mulai</th><th>Selesai</th><th>Status Akses</th><th>Pelanggaran</th><th>Aksi</th></tr></thead>
+              <thead><tr><th>No</th><th>Nama Siswa</th><th>Kelas</th><th>Nilai</th><th>Mulai</th><th>Selesai</th><th>Status Akses</th><th>Pelanggaran</th><th>Aksi</th></tr></thead>
               <tbody id="tbody-hasil"></tbody>
             </table>
           </div>
@@ -1130,8 +1131,9 @@ async function renderPeserta() {
 
   const tbody = document.getElementById('tbody-peserta');
   if (!tbody) return;
-  tbody.innerHTML = list.map((p) => `
+  tbody.innerHTML = list.map((p, idx) => `
     <tr>
+      <td>${idx + 1}</td>
       <td><span class="status-badge warning">${p.kelas}</span></td>
       <td><strong>${p.nama}</strong></td>
       <td>${p.user}</td>
@@ -1141,7 +1143,7 @@ async function renderPeserta() {
         <button class="btn btn-sm btn-danger" onclick="deletePeserta('${p._id}')">Hapus</button>
       </td>
     </tr>
-  `).join('') || '<tr><td colspan="5" style="text-align:center;">Tidak ada data peserta.</td></tr>';
+  `).join('') || '<tr><td colspan="6" style="text-align:center;">Tidak ada data peserta.</td></tr>';
 }
 
 async function showPesertaForm(editId = null) {
@@ -1217,12 +1219,12 @@ async function renderTopik() {
   showLoading(false);
   const tbody = document.getElementById('tbody-topik');
   if (!tbody) return;
-  tbody.innerHTML = list.map((t) => `
-    <tr><td><code>${t._id.slice(0,6)}</code></td><td><strong>${t.nama}</strong></td><td>${t.ket || '-'}</td><td>
+  tbody.innerHTML = list.map((t, idx) => `
+    <tr><td>${idx + 1}</td><td><code>${t._id.slice(0,6)}</code></td><td><strong>${t.nama}</strong></td><td>${t.ket || '-'}</td><td>
       <button class="btn btn-sm btn-outline" onclick="showTopikForm('${t._id}')">Edit</button>
       <button class="btn btn-sm btn-danger" onclick="deleteTopik('${t._id}')">Hapus</button>
     </td></tr>
-  `).join('') || '<tr><td colspan="4" style="text-align:center;">Belum ada topik.</td></tr>';
+  `).join('') || '<tr><td colspan="5" style="text-align:center;">Belum ada topik.</td></tr>';
 }
 
 async function showTopikForm(editId = null) {
@@ -1285,10 +1287,11 @@ async function renderSoal() {
 
   const tbody = document.getElementById('tbody-soal');
   if (!tbody) return;
-  tbody.innerHTML = list.map((s) => {
+  tbody.innerHTML = list.map((s, idx) => {
     const top = topiks.find(t => t._id === s.topikId);
     return `
       <tr>
+        <td>${idx + 1}</td>
         <td><span class="status-badge success">${top?top.nama:s.topikId}</span></td>
         <td><div>${s.teks}</div>${s.imgUrl ? `<img src="${s.imgUrl}" style="max-height:50px; border-radius:4px; margin-top:4px; border:1px solid #ddd;">` : ''}</td>
         <td>${s.opsi.map((o,i) => { const teks = typeof o === 'string' ? o : o.teks; const img = typeof o === 'string' ? '' : (o.img||''); return `<b>${String.fromCharCode(65+i)}:</b> ${teks}${img ? ` <img src="${img}" style="max-height:22px; vertical-align:middle; border-radius:3px; margin-left:4px;">` : ''}`; }).join('<br>')}</td>
@@ -1299,7 +1302,7 @@ async function renderSoal() {
         </td>
       </tr>
     `;
-  }).join('') || '<tr><td colspan="5" style="text-align:center;">Belum ada soal.</td></tr>';
+  }).join('') || '<tr><td colspan="6" style="text-align:center;">Belum ada soal.</td></tr>';
 }
 
 async function showSoalForm(soalId = null) {
@@ -1484,12 +1487,13 @@ async function renderUjian() {
   const filteredList = searchVal ? list.filter(u => u.nama.toLowerCase().includes(searchVal)) : list;
   const tbody = document.getElementById('tbody-ujian');
   if (!tbody) return;
-  tbody.innerHTML = filteredList.map((u) => {
+  tbody.innerHTML = filteredList.map((u, idx) => {
     const top = topiks.find(t => t._id === u.topikId);
     const jumlahSoal = soalAll.filter(s => s.topikId === u.topikId).length;
     const poin = u.poinPerSoal ?? (jumlahSoal > 0 ? +(100/jumlahSoal).toFixed(2) : 0);
     return `
       <tr>
+        <td>${idx + 1}</td>
         <td><strong>${u.nama}</strong><br><small style="color:var(--text-muted);">${top?top.nama:u.topikId}</small></td>
         <td>${(u.kelas||[]).join(', ')}</td>
         <td>${u.durasi} Menit</td>
@@ -1501,7 +1505,7 @@ async function renderUjian() {
         </td>
       </tr>
     `;
-  }).join('') || '<tr><td colspan="6" style="text-align:center;">Belum ada paket ujian.</td></tr>';
+  }).join('') || '<tr><td colspan="7" style="text-align:center;">Belum ada paket ujian.</td></tr>';
 }
 
 let tempSoalCountMap = {};
@@ -1590,10 +1594,11 @@ async function renderToken() {
   if (searchVal) list = list.filter(t => { const uj = ujians.find(u => u._id === t.ujianId); return t.code.toLowerCase().includes(searchVal) || (uj && uj.nama.toLowerCase().includes(searchVal)); });
   const tbody = document.getElementById('tbody-token');
   if (!tbody) return;
-  tbody.innerHTML = list.map((t) => {
+  tbody.innerHTML = list.map((t, idx) => {
     const uj = ujians.find(u => u._id === t.ujianId); const isExp = new Date(t.end) < now || !t.active;
     return `
       <tr>
+        <td>${idx + 1}</td>
         <td><strong style="color:var(--primary); font-size:1.1rem; letter-spacing:1px;">${t.code}</strong></td>
         <td>${uj?uj.nama:t.ujianId}</td>
         <td><small>${t.start.replace('T',' ')} s.d ${t.end.replace('T',' ')}</small></td>
@@ -1604,7 +1609,7 @@ async function renderToken() {
         </td>
       </tr>
     `;
-  }).join('') || '<tr><td colspan="5" style="text-align:center;">Belum ada token.</td></tr>';
+  }).join('') || '<tr><td colspan="6" style="text-align:center;">Belum ada token.</td></tr>';
 }
 
 async function deleteToken(id) { if (confirm("Hapus token ini?")) { showLoading(true); await DB.remove('token', id); showLoading(false); renderToken(); } }
@@ -1645,13 +1650,14 @@ function computeLiveScore(p) {
 function renderMonitoring() {
   const tbody = document.getElementById('tbody-monitoring');
   if (!tbody) return;
-  tbody.innerHTML = monitoringData.map(p => {
+  tbody.innerHTML = monitoringData.map((p, idx) => {
     const remaining = Math.max(0, Math.floor(((p.deadline || 0) - Date.now()) / 1000));
     const h = Math.floor(remaining / 3600), m = Math.floor((remaining % 3600) / 60), s = remaining % 60;
     const timeStr = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
     const liveScore = computeLiveScore(p);
     return `
       <tr>
+        <td>${idx + 1}</td>
         <td><strong>${p.nama || '-'}</strong></td>
         <td>${p.kelas || '-'}</td>
         <td>${p.ujianNama || '-'}</td>
@@ -1661,7 +1667,7 @@ function renderMonitoring() {
         <td><button class="btn btn-sm btn-danger" onclick="stopStudentExam('${p._id}')">⛔ Hentikan</button></td>
       </tr>
     `;
-  }).join('') || '<tr><td colspan="7" style="text-align:center;">Tidak ada siswa yang sedang mengerjakan ujian saat ini.</td></tr>';
+  }).join('') || '<tr><td colspan="8" style="text-align:center;">Tidak ada siswa yang sedang mengerjakan ujian saat ini.</td></tr>';
 }
 
 async function stopStudentExam(progressId) {
@@ -1698,8 +1704,9 @@ async function renderHasil() {
   let list = getFilteredHasil();
   const tbody = document.getElementById('tbody-hasil');
   if (!tbody) return;
-  tbody.innerHTML = list.map((h) => `
+  tbody.innerHTML = list.map((h, idx) => `
     <tr>
+      <td>${idx + 1}</td>
       <td><strong>${h.nama}</strong></td>
       <td>${h.kelas}</td>
       <td><strong style="color:var(--primary); font-size:1rem;">${h.nilai}</strong></td>
@@ -1712,7 +1719,7 @@ async function renderHasil() {
         <button class="btn btn-sm btn-danger" onclick="deleteHasil('${h._id}')">Hapus</button>
       </td>
     </tr>
-  `).join('') || '<tr><td colspan="8" style="text-align:center;">Belum ada hasil pengerjaan.</td></tr>';
+  `).join('') || '<tr><td colspan="9" style="text-align:center;">Belum ada hasil pengerjaan.</td></tr>';
 
   if (list.length > 0) {
     const scores = list.map(l => l.nilai);
