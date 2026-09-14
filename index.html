@@ -1016,7 +1016,7 @@ function renderQuizQuestion() {
   opsContainer.innerHTML = q.options.map((op, opIdx) => `
     <label class="option-item">
       <input type="radio" name="opt-ans" value="${opIdx}" ${studentAnswers[currentQuestionIndex] === opIdx ? 'checked' : ''} onchange="selectAnswer(${opIdx})">
-      <span><b>${String.fromCharCode(65 + opIdx)}.</b> ${op.txt}${op.img ? `<br><img src="${op.img}" style="max-height:100px; border-radius:6px; margin-top:6px; border:1px solid #cbd5e1;">` : ''}</span>
+      <span><b>${String.fromCharCode(65 + opIdx)}.</b> ${op.txt.replace(/\n/g,'<br>')}${op.img ? `<br><img src="${op.img}" style="max-height:100px; border-radius:6px; margin-top:6px; border:1px solid #cbd5e1;">` : ''}</span>
     </label>
   `).join('');
 
@@ -1294,7 +1294,7 @@ async function renderSoal() {
         <td>${idx + 1}</td>
         <td><span class="status-badge success">${top?top.nama:s.topikId}</span></td>
         <td><div>${s.teks}</div>${s.imgUrl ? `<img src="${s.imgUrl}" style="max-height:50px; border-radius:4px; margin-top:4px; border:1px solid #ddd;">` : ''}</td>
-        <td>${s.opsi.map((o,i) => { const teks = typeof o === 'string' ? o : o.teks; const img = typeof o === 'string' ? '' : (o.img||''); return `<b>${String.fromCharCode(65+i)}:</b> ${teks}${img ? ` <img src="${img}" style="max-height:22px; vertical-align:middle; border-radius:3px; margin-left:4px;">` : ''}`; }).join('<br>')}</td>
+        <td>${s.opsi.map((o,i) => { const teks = typeof o === 'string' ? o : o.teks; const img = typeof o === 'string' ? '' : (o.img||''); return `<b>${String.fromCharCode(65+i)}:</b> ${teks.replace(/\n/g,'<br>')}${img ? ` <img src="${img}" style="max-height:22px; vertical-align:middle; border-radius:3px; margin-left:4px;">` : ''}`; }).join('<br>')}</td>
         <td><strong>${String.fromCharCode(65 + s.kunci)}</strong></td>
         <td>
           <button class="btn btn-sm btn-outline" onclick="showSoalForm('${s._id}')">Edit</button>
@@ -1322,7 +1322,7 @@ async function showSoalForm(soalId = null) {
   const optionRowHtml = (idx, label, required) => `
     <div class="form-group">
       <label>Opsi ${label}${required ? '' : ' (Opsional)'}</label>
-      <input type="text" id="s-op${idx}" value="${normOpsi[idx].teks}" ${required ? 'required' : ''}>
+      <textarea id="s-op${idx}" rows="2" ${required ? 'required' : ''}>${normOpsi[idx].teks}</textarea>
       <div style="display:flex; gap:6px; margin-top:6px; align-items:center;">
         <input type="file" id="s-opfile${idx}" accept="image/*" onchange="previewCompressOptionImage(event, ${idx})" style="flex:1; font-size:0.72rem;">
         <input type="text" id="s-opimg${idx}" placeholder="atau link gambar / tempel (Ctrl+V) opsi ${label}" value="${normOpsi[idx].img}" onchange="previewUrlOptionImage(this.value, ${idx})" onpaste="handleImagePaste(event,'s-opimg${idx}','s-opimg-preview-${idx}',350)" style="flex:1; font-size:0.72rem;">
@@ -1793,8 +1793,8 @@ function showDetailHasil(id) {
       ${(data.review || []).map((r, i) => `
         <div style="border-bottom:1px solid #e2e8f0; padding:6px 0; font-size:0.85rem;">
           <p><b>#${i+1}:</b> ${r.soalTeks}</p>
-          <p>Jawaban Siswa: <span style="color:${r.isCorrect?'var(--success)':'var(--danger)'}">${r.jawabanSiswa}</span></p>
-          ${!r.isCorrect ? `<p style="color:var(--success);">Kunci: ${r.kunciTeks}</p>` : ''}
+          <p>Jawaban Siswa: <span style="color:${r.isCorrect?'var(--success)':'var(--danger)'}">${(r.jawabanSiswa||'').replace(/\n/g,'<br>')}</span></p>
+          ${!r.isCorrect ? `<p style="color:var(--success);">Kunci: ${(r.kunciTeks||'').replace(/\n/g,'<br>')}</p>` : ''}
         </div>
       `).join('')}
     </div>
