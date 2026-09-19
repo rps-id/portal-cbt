@@ -442,19 +442,36 @@ const firestore = firebase.firestore();
 function showLoading(v) { document.getElementById('loading-overlay').style.display = v ? 'flex' : 'none'; }
 
 const DB = {
+  // Cache in-memory per sesi halaman: mencegah getAll() dipanggil ulang untuk
+  // koleksi yang sama berkali-kali (mis. 'ujian'/'topik' dibaca di banyak layar).
+  // Otomatis dibersihkan (invalidate) begitu ada add/update/remove pada koleksi itu.
+  _cache: {},
+  _invalidate(col) {
+    delete this._cache[col];
+    // Cache khusus per-topik untuk 'soal' (lihat getSoalByTopik) juga harus ikut dibersihkan
+    if (col === 'soal') {
+      Object.keys(this._cache).forEach(k => { if (k.startsWith('soal_topik_')) delete this._cache[k]; });
+    }
+  },
   async getAll(col) {
+    if (this._cache[col]) return this._cache[col];
     const snap = await firestore.collection(col).get();
-    return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    const data = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    this._cache[col] = data;
+    return data;
   },
   async add(col, data) {
     const ref = await firestore.collection(col).add(data);
+    this._invalidate(col);
     return ref.id;
   },
   async update(col, id, data) {
     await firestore.collection(col).doc(id).update(data);
+    this._invalidate(col);
   },
   async remove(col, id) {
     await firestore.collection(col).doc(id).delete();
+    this._invalidate(col);
   },
   async getSetting(key, fallback) {
     const doc = await firestore.collection('settings').doc(key).get();
@@ -462,6 +479,32 @@ const DB = {
   },
   async setSetting(key, value) {
     await firestore.collection('settings').doc(key).set({ value });
+  },
+  // FIX KUOTA: ambil soal LANGSUNG per topik lewat query Firestore (where),
+  // bukan getAll('soal') lalu difilter di client. Ini penghematan terbesar
+  // saat siswa mulai ujian (dulu narik seluruh bank soal semua topik).
+  async getSoalByTopik(topikId) {
+    const cacheKey = `soal_topik_${topikId}`;
+    if (this._cache[cacheKey]) return this._cache[cacheKey];
+    const snap = await firestore.collection('soal').where('topikId', '==', topikId).get();
+    const data = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    this._cache[cacheKey] = data;
+    return data;
+  },
+  // FIX KUOTA: ambil hasil ujian MILIK SISWA ITU SAJA lewat query, bukan
+  // getAll('hasil') yang narik nilai seluruh siswa se-sekolah tiap kali
+  // dashboard siswa dibuka. Ini penyumbang boros terbesar sebelumnya.
+  async getHasilBySiswaNama(nama) {
+    const snap = await firestore.collection('hasil').where('nama', '==', nama).get();
+    return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+  },
+  // FIX KUOTA: cari 1 token lewat kode-nya langsung (query, limit 1),
+  // bukan getAll('token') yang narik semua token yang pernah dibuat guru.
+  async findTokenByCode(code) {
+    const snap = await firestore.collection('token').where('code', '==', code).limit(1).get();
+    if (snap.empty) return null;
+    const d = snap.docs[0];
+    return { _id: d.id, ...d.data() };
   },
   // Realtime listener khusus untuk Hasil Ujian, supaya panel admin
   // update otomatis begitu ada siswa yang menyelesaikan ujian.
@@ -764,7 +807,7 @@ async function loadSiswaDashboard() {
 
   showLoading(true);
   const [allUjian, allTopik, hasilList, progressSnap] = await Promise.all([
-    DB.getAll('ujian'), DB.getAll('topik'), DB.getAll('hasil'),
+    DB.getAll('ujian'), DB.getAll('topik'), DB.getHasilBySiswaNama(currentSiswa.nama),
     firestore.collection('progress').where('siswaId', '==', currentSiswa._id).get()
   ]);
   showLoading(false);
@@ -827,10 +870,10 @@ async function promptTokenModal(ujianId, isResume = false) {
     e.preventDefault();
     const tokenInput = document.getElementById('input-token-code').value.trim().toUpperCase();
     showLoading(true);
-    const tokenList = await DB.getAll('token');
+    const rawToken = await DB.findTokenByCode(tokenInput);
     showLoading(false);
 
-    const foundToken = tokenList.find(t => t.code === tokenInput && t.ujianId === selectedUjianTarget._id && t.active);
+    const foundToken = (rawToken && rawToken.ujianId === selectedUjianTarget._id && rawToken.active) ? rawToken : null;
 
     if (!foundToken) {
       return alert("Token Ujian tidak valid, salah paket, atau sudah nonaktif!");
@@ -875,9 +918,8 @@ async function startQuizWithTarget(foundUjian) {
   }
 
   showLoading(true);
-  const soalList = await DB.getAll('soal');
+  let filteredSoal = await DB.getSoalByTopik(foundUjian.topikId);
   showLoading(false);
-  let filteredSoal = soalList.filter(s => s.topikId === foundUjian.topikId);
 
   if (filteredSoal.length === 0) return alert("Belum ada soal untuk topik ujian ini!");
 
