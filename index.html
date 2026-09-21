@@ -677,7 +677,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Hentikan listener/interval realtime dari halaman lain supaya tidak boros saat tidak dilihat
       if (pageId !== 'page-hasil' && unsubscribeHasil) { unsubscribeHasil(); unsubscribeHasil = null; }
       if (pageId !== 'page-monitoring') {
-        if (unsubscribeMonitoring) { unsubscribeMonitoring(); unsubscribeMonitoring = null; }
+        if (unsubscribeMonitoring) { clearInterval(unsubscribeMonitoring); unsubscribeMonitoring = null; }
         if (monitoringTickInterval) { clearInterval(monitoringTickInterval); monitoringTickInterval = null; }
       }
 
@@ -783,7 +783,7 @@ function openAdminModalDirect() {
 function logoutAdminAct() {
   sessionStorage.removeItem('cbt_role');
   if (unsubscribeHasil) { unsubscribeHasil(); unsubscribeHasil = null; }
-  if (unsubscribeMonitoring) { unsubscribeMonitoring(); unsubscribeMonitoring = null; }
+  if (unsubscribeMonitoring) { clearInterval(unsubscribeMonitoring); unsubscribeMonitoring = null; }
   if (monitoringTickInterval) { clearInterval(monitoringTickInterval); monitoringTickInterval = null; }
   showScreen('screen-siswa');
   document.getElementById('header-title').innerText = "Portal CBT & Evaluasi Siswa";
@@ -794,7 +794,7 @@ function logoutSiswaAct() {
   sessionStorage.removeItem('cbt_role');
   sessionStorage.removeItem('cbt_siswa');
   sessionStorage.removeItem('cbt_active_ujian');
-  if (progressListenerUnsub) { progressListenerUnsub(); progressListenerUnsub = null; }
+  if (progressListenerUnsub) { clearInterval(progressListenerUnsub); progressListenerUnsub = null; }
   currentSiswa = null;
   document.getElementById('form-login-siswa').reset();
   showScreen('screen-siswa');
@@ -973,15 +973,28 @@ async function saveProgress() {
   }
 }
 
-// Dengarkan perintah "Hentikan" dari admin (halaman Monitoring) secara realtime
+// FIX KUOTA #4: Cek perintah "Hentikan" dari admin lewat POLLING (bukan realtime
+// listener). Sebelumnya pakai onSnapshot() pada dokumen yang SAMA yang ditulis
+// ulang oleh saveProgress() setiap 15 detik / tiap pindah soal / tiap pilih
+// jawaban -> setiap write itu ikut memicu 1 read balik ke listener milik siswa
+// itu sendiri. Untuk 38 siswa x puluhan write selama ujian, ini menyumbang
+// ribuan reads tanpa disadari. Polling tiap 30 detik cukup untuk kebutuhan
+// "hentikan ujian" (tidak perlu instan dalam hitungan milidetik), dan reads-nya
+// jauh lebih murah & bisa diprediksi: durasi_menit x 2 reads per siswa saja.
 function listenForAdminStop() {
-  if (progressListenerUnsub) progressListenerUnsub();
-  progressListenerUnsub = firestore.collection('progress').doc(progressDocId()).onSnapshot(doc => {
-    if (doc.exists && doc.data().stopped === true && !isSubmittingQuiz) {
-      alert("Ujian Anda dihentikan oleh Admin/Guru. Jawaban yang sudah dikerjakan akan otomatis dikumpulkan.");
-      finishQuiz();
+  if (progressListenerUnsub) { clearInterval(progressListenerUnsub); progressListenerUnsub = null; }
+  progressListenerUnsub = setInterval(async () => {
+    if (isSubmittingQuiz) return;
+    try {
+      const doc = await firestore.collection('progress').doc(progressDocId()).get();
+      if (doc.exists && doc.data().stopped === true && !isSubmittingQuiz) {
+        alert("Ujian Anda dihentikan oleh Admin/Guru. Jawaban yang sudah dikerjakan akan otomatis dikumpulkan.");
+        finishQuiz();
+      }
+    } catch (err) {
+      console.error("Gagal cek status stop:", err);
     }
-  });
+  }, 30000); // cek tiap 30 detik
 }
 
 async function loadProgress(siswaId, ujianId) {
@@ -1079,7 +1092,7 @@ async function finishQuiz() {
   if (finishBtn) { finishBtn.disabled = true; finishBtn.innerText = 'Menyimpan...'; }
 
   if (quizTimerInterval) clearInterval(quizTimerInterval);
-  if (progressListenerUnsub) { progressListenerUnsub(); progressListenerUnsub = null; }
+  if (progressListenerUnsub) { clearInterval(progressListenerUnsub); progressListenerUnsub = null; }
 
   let correctCount = 0;
   const review = [];
@@ -1703,14 +1716,33 @@ async function toggleToken(id, newVal) { showLoading(true); await DB.update('tok
 
 // Halaman Hasil Ujian memakai listener realtime supaya nilai baru langsung muncul
 // ===== MONITORING: admin melihat siswa yang sedang mengerjakan ujian secara realtime =====
+// FIX KUOTA #5: Halaman Monitoring dulu pakai onSnapshot() pada koleksi 'progress'
+// SELURUHNYA. Masalahnya, koleksi ini ditulis ulang oleh saveProgress() setiap
+// siswa tiap 15 detik + tiap pindah soal/jawab -> SETIAP write dari SEMUA siswa
+// yang sedang ujian ikut memicu listener ini balik (baca ulang seluruh koleksi).
+// Kalau halaman ini dibiarkan terbuka selama ujian, reads-nya menumpuk sangat
+// cepat (mengikuti frekuensi ketikan/klik seluruh siswa, bukan cuma waktu).
+// Diganti jadi POLLING interval tetap -> reads jadi terprediksi & terbatas:
+// (durasi ujian menit x 4) x jumlah siswa aktif saja, tidak peduli seberapa
+// sering siswa klik/jawab.
 function startMonitoringPage() {
-  if (unsubscribeMonitoring) unsubscribeMonitoring();
-  unsubscribeMonitoring = firestore.collection('progress').onSnapshot(snap => {
-    monitoringData = snap.docs.map(d => ({ _id: d.id, ...d.data() })).filter(p => !p.stopped);
-    renderMonitoring();
-  });
+  if (unsubscribeMonitoring) { clearInterval(unsubscribeMonitoring); unsubscribeMonitoring = null; }
+
+  async function pollMonitoring() {
+    try {
+      const snap = await firestore.collection('progress').get();
+      monitoringData = snap.docs.map(d => ({ _id: d.id, ...d.data() })).filter(p => !p.stopped);
+      renderMonitoring();
+    } catch (err) {
+      console.error("Gagal memuat data monitoring:", err);
+    }
+  }
+
+  pollMonitoring(); // load pertama kali langsung
+  unsubscribeMonitoring = setInterval(pollMonitoring, 15000); // refresh data tiap 15 detik
+
   if (monitoringTickInterval) clearInterval(monitoringTickInterval);
-  monitoringTickInterval = setInterval(renderMonitoring, 1000); // update tampilan sisa waktu tiap detik
+  monitoringTickInterval = setInterval(renderMonitoring, 1000); // update tampilan sisa waktu tiap detik (dari data lokal, tanpa baca ulang ke server)
 }
 
 function computeLiveScore(p) {
