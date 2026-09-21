@@ -32,7 +32,9 @@
     .app-container { background: var(--surface); width: 100%; max-width: 1200px; border-radius: var(--radius); box-shadow: 0 10px 25px rgba(0,0,0,0.1); overflow: hidden; min-height: 550px; display: flex; flex-direction: column; }
     header { background: linear-gradient(90deg, var(--primary), var(--primary-dark)); color: white; padding: 15px 25px; display: flex; justify-content: space-between; align-items: center; }
     header h1 { font-size: 1.1rem; font-weight: 600; }
-    .badge { background: rgba(255, 255, 255, 0.2); padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; }
+    .badge { background: rgba(255, 255, 255, 0.2); padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; border: none; color: white; font-family: 'Poppins', sans-serif; cursor: default; }
+    .badge-clickable { cursor: pointer; transition: background 0.2s; }
+    .badge-clickable:hover { background: rgba(255, 255, 255, 0.35); }
     .main-body { padding: 25px; flex: 1; position: relative; }
 
     .view-screen { display: none; }
@@ -120,7 +122,7 @@
 <div class="app-container">
   <header>
     <h1 id="header-title">Portal CBT & Evaluasi Siswa</h1>
-    <span class="badge" id="role-badge">Siswa</span>
+    <button type="button" class="badge badge-clickable" id="role-badge" onclick="openAdminModalDirect()">🔒 Admin</button>
   </header>
 
   <div class="main-body">
@@ -139,9 +141,8 @@
           <label>Password</label>
           <input type="password" id="siswa-pass" placeholder="ikuti instruksi guru" required>
         </div>
-        <div style="display: flex; gap: 10px; margin-top: 20px;">
-          <button type="submit" class="btn" style="flex: 1;">Masuk Portal Siswa 🚀</button>
-          <button type="button" class="btn btn-outline" onclick="openAdminModalDirect()">🔑 Panel Admin / Guru</button>
+        <div style="margin-top: 20px;">
+          <button type="submit" class="btn" style="width: 100%;">Masuk Portal Siswa 🚀</button>
         </div>
       </form>
     </div>
@@ -572,11 +573,12 @@ async function restoreSession() {
   if (role === 'admin') {
     showScreen('screen-admin');
     document.getElementById('header-title').innerText = "Dashboard Admin System";
-    document.getElementById('role-badge').innerText = "Admin / Guru";
+    setRoleBadge('admin');
     renderPeserta();
   } else if (role === 'siswa') {
     const savedSiswa = sessionStorage.getItem('cbt_siswa');
     if (!savedSiswa) return;
+    setRoleBadge('siswa');
     currentSiswa = JSON.parse(savedSiswa);
     const activeUjianId = sessionStorage.getItem('cbt_active_ujian');
     if (activeUjianId) {
@@ -602,6 +604,28 @@ function openModal(html) {
 function closeModal() {
   const overlay = document.getElementById('modal-overlay');
   if (overlay) overlay.style.display = 'none';
+}
+
+// Kelola tampilan badge pojok kanan atas header:
+// - 'guest' : belum login siapa-siapa -> tombol gembok kecil, bisa diklik untuk buka login admin
+// - 'siswa' : sedang login sebagai siswa -> label info saja, tidak bisa diklik
+// - 'admin' : sedang login sebagai admin/guru -> label info saja, tidak bisa diklik
+function setRoleBadge(mode) {
+  const badgeEl = document.getElementById('role-badge');
+  if (!badgeEl) return;
+  if (mode === 'admin') {
+    badgeEl.innerText = 'Admin / Guru';
+    badgeEl.classList.remove('badge-clickable');
+    badgeEl.onclick = null;
+  } else if (mode === 'siswa') {
+    badgeEl.innerText = 'Siswa';
+    badgeEl.classList.remove('badge-clickable');
+    badgeEl.onclick = null;
+  } else {
+    badgeEl.innerText = '🔒 Admin';
+    badgeEl.classList.add('badge-clickable');
+    badgeEl.onclick = openAdminModalDirect;
+  }
 }
 
 function showScreen(screenId) {
@@ -772,7 +796,7 @@ function openAdminModalDirect() {
       sessionStorage.setItem('cbt_role', 'admin');
       showScreen('screen-admin');
       document.getElementById('header-title').innerText = "Dashboard Admin System";
-      document.getElementById('role-badge').innerText = "Admin / Guru";
+      setRoleBadge('admin');
       renderPeserta();
     } else {
       alert("Password Admin Salah! (Default: 123456)");
@@ -787,7 +811,7 @@ function logoutAdminAct() {
   if (monitoringTickInterval) { clearInterval(monitoringTickInterval); monitoringTickInterval = null; }
   showScreen('screen-siswa');
   document.getElementById('header-title').innerText = "Portal CBT & Evaluasi Siswa";
-  document.getElementById('role-badge').innerText = "Siswa";
+  setRoleBadge('guest');
 }
 
 function logoutSiswaAct() {
@@ -798,10 +822,12 @@ function logoutSiswaAct() {
   currentSiswa = null;
   document.getElementById('form-login-siswa').reset();
   showScreen('screen-siswa');
+  setRoleBadge('guest');
 }
 
 async function loadSiswaDashboard() {
   showScreen('screen-dashboard-siswa');
+  setRoleBadge('siswa');
   document.getElementById('dash-siswa-nama').innerText = `Selamat Datang, ${currentSiswa.nama}`;
   document.getElementById('dash-siswa-kelas').innerText = `Kelas: ${currentSiswa.kelas}`;
 
