@@ -108,6 +108,15 @@
 
     .loading-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(255,255,255,0.7); z-index: 10000; display:none; justify-content:center; align-items:center; font-weight:600; color: var(--primary); }
 
+    /* Lightbox ringan untuk perbesar gambar soal/opsi saat ujian (tanpa library tambahan) */
+    .zoomable-img { cursor: zoom-in; }
+    .img-zoom-hint { font-size: 0.7rem; color: var(--text-muted); margin-top: 3px; }
+    .img-lightbox-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background: rgba(15,23,42,0.9); z-index: 10001; justify-content:center; align-items:center; padding: 20px; }
+    .img-lightbox-overlay.active { display:flex; }
+    .img-lightbox-overlay img { max-width:95%; max-height:90%; border-radius:8px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+    .img-lightbox-close { position:absolute; top:16px; right:18px; background: rgba(255,255,255,0.15); color:white; border:none; width:38px; height:38px; border-radius:50%; font-size:1.2rem; cursor:pointer; line-height:1; }
+    .img-lightbox-close:hover { background: rgba(255,255,255,0.3); }
+
     @media (max-width: 768px) {
       .admin-layout { flex-direction: column; }
       .sidebar { width: 100%; border-right: none; border-bottom: 1px solid #e2e8f0; flex-direction: row; overflow-x: auto; }
@@ -419,6 +428,12 @@
 
 <div class="loading-overlay" id="loading-overlay">Memuat data...</div>
 
+<!-- LIGHTBOX GAMBAR (soal & opsi ujian) -->
+<div class="img-lightbox-overlay" id="img-lightbox-overlay" onclick="closeImageLightbox()">
+  <button type="button" class="img-lightbox-close" onclick="closeImageLightbox(event)">✕</button>
+  <img id="img-lightbox-img" src="" alt="Perbesar gambar">
+</div>
+
 <script>
 /* =========================================================
    1. KONFIGURASI FIREBASE
@@ -605,6 +620,25 @@ function closeModal() {
   const overlay = document.getElementById('modal-overlay');
   if (overlay) overlay.style.display = 'none';
 }
+
+// Lightbox ringan: perbesar gambar soal/opsi ujian saat diklik, tutup lagi saat
+// diklik ulang / klik area gelap / tombol ✕ / tombol Esc. Tidak menambah request
+// jaringan sama sekali -- cuma menampilkan ulang gambar yang sudah dimuat di
+// halaman (pakai this.src), jadi tidak menambah beban kuota.
+function openImageLightbox(url, event) {
+  if (event) { event.preventDefault(); event.stopPropagation(); }
+  const overlay = document.getElementById('img-lightbox-overlay');
+  const img = document.getElementById('img-lightbox-img');
+  if (!overlay || !img || !url) return;
+  img.src = url;
+  overlay.classList.add('active');
+}
+function closeImageLightbox(event) {
+  if (event) event.stopPropagation();
+  const overlay = document.getElementById('img-lightbox-overlay');
+  if (overlay) overlay.classList.remove('active');
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeImageLightbox(); });
 
 // Kelola tampilan badge pojok kanan atas header:
 // - 'guest' : belum login siapa-siapa -> tombol gembok kecil, bisa diklik untuk buka login admin
@@ -1091,13 +1125,13 @@ function renderQuizQuestion() {
   const q = currentQuestions[currentQuestionIndex];
   document.getElementById('question-number-title').innerText = `Soal No. ${currentQuestionIndex + 1} / ${currentQuestions.length}`;
   document.getElementById('question-text').innerText = q.teks;
-  document.getElementById('question-image').innerHTML = q.imgUrl ? `<img src="${q.imgUrl}" style="max-height:180px; border-radius:6px; border:1px solid #cbd5e1;">` : '';
+  document.getElementById('question-image').innerHTML = q.imgUrl ? `<img src="${q.imgUrl}" class="zoomable-img" style="max-height:180px; border-radius:6px; border:1px solid #cbd5e1;" onclick="openImageLightbox(this.src, event)"><div class="img-zoom-hint">🔍 Ketuk gambar untuk memperbesar</div>` : '';
 
   const opsContainer = document.getElementById('options-container');
   opsContainer.innerHTML = q.options.map((op, opIdx) => `
     <label class="option-item">
       <input type="radio" name="opt-ans" value="${opIdx}" ${studentAnswers[currentQuestionIndex] === opIdx ? 'checked' : ''} onchange="selectAnswer(${opIdx})">
-      <span><b>${String.fromCharCode(65 + opIdx)}.</b> ${op.txt.replace(/\n/g,'<br>')}${op.img ? `<br><img src="${op.img}" style="max-height:100px; border-radius:6px; margin-top:6px; border:1px solid #cbd5e1;">` : ''}</span>
+      <span><b>${String.fromCharCode(65 + opIdx)}.</b> ${op.txt.replace(/\n/g,'<br>')}${op.img ? `<br><img src="${op.img}" class="zoomable-img" style="max-height:100px; border-radius:6px; margin-top:6px; border:1px solid #cbd5e1;" onclick="openImageLightbox(this.src, event)">` : ''}</span>
     </label>
   `).join('');
 
