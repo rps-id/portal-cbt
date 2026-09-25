@@ -507,6 +507,10 @@ const DB = {
     if (col === 'soal') {
       Object.keys(this._cache).forEach(k => { if (k.startsWith('soal_topik_')) delete this._cache[k]; });
     }
+    // Cache khusus per-kelas untuk 'ujian' (lihat getUjianForKelas) juga harus ikut dibersihkan
+    if (col === 'ujian') {
+      Object.keys(this._cache).forEach(k => { if (k.startsWith('ujian_kelas_')) delete this._cache[k]; });
+    }
   },
   async getAll(col) {
     if (this._cache[col]) return this._cache[col];
@@ -560,6 +564,39 @@ const DB = {
     if (snap.empty) return null;
     const d = snap.docs[0];
     return { _id: d.id, ...d.data() };
+  },
+  // FIX KUOTA #7: cari 1 siswa langsung lewat query (user+pass), BUKAN
+  // getAll('peserta') yang menarik SELURUH roster siswa se-sekolah (semua
+  // kelas, semua mapel, akumulasi dari awal sistem dipakai) hanya untuk
+  // mencocokkan 1 baris. Ini penyumbang terbesar lonjakan reads tepat saat
+  // siswa login, karena terjadi berkali-kali (1x per siswa yang login) dan
+  // skalanya bukan berdasar jumlah siswa 1 kelas, tapi jumlah TOTAL peserta
+  // yang pernah didaftarkan ke sistem ini.
+  async findPesertaByLogin(user, pass) {
+    const snap = await firestore.collection('peserta').where('user', '==', user).where('pass', '==', pass).limit(1).get();
+    if (snap.empty) return null;
+    const d = snap.docs[0];
+    return { _id: d.id, ...d.data() };
+  },
+  // FIX KUOTA #7: ambil paket ujian yang RELEVAN untuk 1 kelas saja lewat
+  // query (array-contains + kelas kosong/untuk semua kelas), bukan
+  // getAll('ujian') yang menarik SEMUA paket ujian yang pernah dibuat guru
+  // manapun untuk kelas manapun sejak awal semester. Disimpan di cache
+  // khusus per-kelas (bukan cache 'ujian' umum) supaya tidak tertukar
+  // dengan kebutuhan admin yang perlu melihat SEMUA paket ujian.
+  async getUjianForKelas(kelas) {
+    const cacheKey = `ujian_kelas_${kelas}`;
+    if (this._cache[cacheKey]) return this._cache[cacheKey];
+    const [byKelas, forAll] = await Promise.all([
+      firestore.collection('ujian').where('kelas', 'array-contains', kelas).get(),
+      firestore.collection('ujian').where('kelas', '==', []).get()
+    ]);
+    const map = new Map();
+    byKelas.docs.forEach(d => map.set(d.id, { _id: d.id, ...d.data() }));
+    forAll.docs.forEach(d => map.set(d.id, { _id: d.id, ...d.data() }));
+    const data = Array.from(map.values());
+    this._cache[cacheKey] = data;
+    return data;
   },
   // Realtime listener khusus untuk Hasil Ujian, supaya panel admin
   // update otomatis begitu ada siswa yang menyelesaikan ujian.
@@ -637,7 +674,7 @@ async function restoreSession() {
     const activeUjianId = sessionStorage.getItem('cbt_active_ujian');
     if (activeUjianId) {
       showLoading(true);
-      const allUjian = await DB.getAll('ujian');
+      const allUjian = await DB.getUjianForKelas(currentSiswa.kelas);
       showLoading(false);
       const uj = allUjian.find(u => u._id === activeUjianId);
       if (uj) { await startQuizWithTarget(uj); return; }
@@ -769,10 +806,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       const p = document.getElementById('siswa-pass').value.trim();
  
       showLoading(true);
-      const pesertaList = await DB.getAll('peserta');
-      showLoading(false);
-      const foundSiswa = pesertaList.find(s => s.user === u && s.pass === p);
- 
+      const foundSiswa = await DB.findPesertaByLogin(u, p);
+      showLoading(false); 
       if (!foundSiswa) {
         return customAlert("Username atau Password Siswa salah!");
       }
@@ -955,7 +990,7 @@ async function loadSiswaDashboard() {
  
   showLoading(true);
   const [allUjian, allTopik, hasilList, progressSnap] = await Promise.all([
-    DB.getAll('ujian'), DB.getAll('topik'), DB.getHasilBySiswaNama(currentSiswa.nama),
+    DB.getUjianForKelas(currentSiswa.kelas), DB.getAll('topik'), DB.getHasilBySiswaNama(currentSiswa.nama),
     firestore.collection('progress').where('siswaId', '==', currentSiswa._id).get()
   ]);
   showLoading(false);
@@ -997,7 +1032,7 @@ async function loadSiswaDashboard() {
  
 async function promptTokenModal(ujianId, isResume = false) {
   showLoading(true);
-  const allUjian = await DB.getAll('ujian');
+  const allUjian = await DB.getUjianForKelas(currentSiswa.kelas);
   showLoading(false);
   selectedUjianTarget = allUjian.find(u => u._id === ujianId);
   if (!selectedUjianTarget) return customAlert("Paket Ujian tidak ditemukan!");
